@@ -1,0 +1,8 @@
+node_modules/
+
+# arquitectura agentica local: no versionada, no entra a reviews
+.agents/
+scratch/
+*.local.md
+# Local Pi runtime state
+.atl/

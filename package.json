@@ -1,0 +1,15 @@
+{
+  "name": "pi-session-scrub",
+  "version": "0.1.0",
+  "description": "Keep Pi session list clean and descriptive — zero ceremony, opt-in commands only.",
+  "author": "clezapp",
+  "keywords": ["pi-package"],
+  "type": "module",
+  "pi": {
+    "extensions": ["./extensions/session-scrub/index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

@@ -1,0 +1,46 @@
+project: session-scrub
+type: pi-plugin
+repo_root: /home/cleceta/AI_projects_V3/PI_Agent-MyPlugins/session-scrub
+problem_input: PRD.md
+working_contract: AGENTS.md
+
+stack:
+  language: typescript-strict
+  runtime: pi-extension-via-jiti
+  entry: extensions/session-scrub/index.ts
+  pi_version: 0.85.1
+  build_step: none
+  core_libs: peerDependencies-star
+
+testing:
+  runner: none-automated-yet
+  manual_trial: "pi -e ./extensions/session-scrub/index.ts + /reload"
+  install_gate: tagged-versions-only
+  conventions:
+    - typescript-skill-const-types-flat-interfaces-no-any
+    - english-code-commits-spanish-docs-ok
+
+sdd:
+  execution: interactive
+  artifact_store: openspec
+  changes_dir: openspec/changes
+  delivery_strategy: ask-on-risk
+  review_budget_lines: 400
+  strict_tdd: true
+  phase_gates:
+    - pause-and-summarize-after-each-phase
+    - user-approves-next-phase
+
+skill_registry: .atl/skill-registry.md
+skills:
+  - /home/cleceta/.pi/agent/skills/pi-plugin-dev/SKILL.md
+  - /home/cleceta/.pi/agent/skills/pi-sessions/SKILL.md
+  - /home/cleceta/.pi/agent/skills/pi-packages/SKILL.md
+  - /home/cleceta/.pi/agent/skills/typescript/SKILL.md
+
+constraints:
+  - zero-tokens-by-default-no-before_agent_start-injection
+  - opt-in-commands-only
+  - never-touch-live-session-trash-reversible-only
+  - meta-and-code-never-share-a-commit
+  - no-duplicated-pi-api-docs-lives-in-pi-plugin-dev
