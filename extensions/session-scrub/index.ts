@@ -282,10 +282,10 @@ function classifySession(
       },
     };
   }
-  return {
-    kind: CLASS_KIND.kept,
-    reason: verdict === VERDICTS.keep ? "has-verdict-keep" : "has-content-no-verdict",
-  };
+  if (verdict !== undefined) {
+    return { kind: CLASS_KIND.kept, reason: `has-verdict-${verdict}` };
+  }
+  return { kind: CLASS_KIND.kept, reason: "has-content-no-verdict" };
 }
 
 /** F4 grammar: skip `#`/blank lines; `<...>` placeholders read as empty. */
@@ -745,6 +745,482 @@ async function handleAgentEnd(
   await maybeOfferHint(ctx, agentMessageTexts(event.messages));
 }
 
+const TRIAGE_VERDICT = {
+  KEEP: "keep",
+  PAUSED: "paused",
+  FINISHED: "finished",
+  EPHEMERAL: "ephemeral",
+} as const;
+type TriageVerdict = (typeof TRIAGE_VERDICT)[keyof typeof TRIAGE_VERDICT];
+
+const TRIAGE_GRADE = {
+  MACHINE: "machine",
+  WEAK: "weak",
+  JUDGED: "judged",
+} as const;
+type TriageGrade = (typeof TRIAGE_GRADE)[keyof typeof TRIAGE_GRADE];
+
+const HEAD_DIGEST_CHARS = 300;
+const TAIL_DIGEST_CHARS = 300;
+const MAX_DIGEST_SESSIONS = 20;
+
+interface DigestPack {
+  shortId: string;
+  messageCount: number;
+  ageDays: number;
+  created: string;
+  modified: string;
+  sessionName: string | undefined;
+  flowName: string | undefined;
+  head: string;
+  tail: string;
+  headTruncated: boolean;
+  tailTruncated: boolean;
+}
+
+interface WeakGuess {
+  shortId: string;
+  grade: typeof TRIAGE_GRADE.WEAK;
+  guess: TriageVerdict;
+  rationale: string;
+}
+
+interface MachineFact {
+  shortId: string;
+  grade: typeof TRIAGE_GRADE.MACHINE;
+  proposal: typeof TRIAGE_VERDICT.KEEP;
+  rationale: string;
+}
+
+interface ApplyAssignment {
+  idPrefix: string;
+  verdict: TriageVerdict;
+  reason: string;
+}
+
+interface ResolvedAssignment {
+  assignment: ApplyAssignment;
+  targetPath: string;
+  shortId: string;
+  provenance: TriageGrade;
+}
+
+interface RejectedAssignment {
+  raw: string;
+  cause: string;
+}
+
+interface TriageCandidate {
+  info: SessionInfo;
+  userMessages: string[];
+  assistantMessages: string[];
+}
+
+function isTriageVerdict(value: string): value is TriageVerdict {
+  return (
+    value === TRIAGE_VERDICT.KEEP ||
+    value === TRIAGE_VERDICT.PAUSED ||
+    value === TRIAGE_VERDICT.FINISHED ||
+    value === TRIAGE_VERDICT.EPHEMERAL
+  );
+}
+
+function stripForQuote(text: string): string {
+  return text
+    .replace(/\[[0-9;]*m/g, "")
+    .replace(/[̀-ͯ]/g, "");
+}
+
+function truncateWithEllipsis(text: string, max: number): { text: string; truncated: boolean } {
+  if (text.length <= max) return { text, truncated: false };
+  return { text: `${text.slice(0, max)}…`, truncated: true };
+}
+
+function assistantTexts(entries: unknown): string[] {
+  if (!Array.isArray(entries)) return [];
+  const out: string[] = [];
+  for (const e of entries) {
+    if (typeof e !== "object" || e === null) continue;
+    const entry = e as { type?: unknown };
+    if (entry.type !== "message") continue;
+    const msg = (e as { message?: unknown }).message;
+    if (typeof msg !== "object" || msg === null) continue;
+    const m = msg as { role?: unknown; content?: unknown };
+    if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+    const text = m.content
+      .filter(isTextPart)
+      .map((part) => part.text)
+      .join(" ");
+    if (text.length > 0) out.push(text);
+  }
+  return out;
+}
+
+function buildDigestPack(
+  args: {
+    shortId: string;
+    messageCount: number;
+    created: Date;
+    modified: Date;
+    sessionName?: string;
+    flowName?: string;
+  },
+  userMessages: string[],
+  assistantMessages: string[],
+): DigestPack {
+  const headRaw = stripForQuote(userMessages[0] ?? "");
+  const tailRaw = stripForQuote(
+    [...assistantMessages.slice(-3), ...userMessages.slice(-2)].join("\n---\n"),
+  );
+  const head = truncateWithEllipsis(headRaw, HEAD_DIGEST_CHARS);
+  const tail = truncateWithEllipsis(tailRaw, TAIL_DIGEST_CHARS);
+  return {
+    shortId: args.shortId,
+    messageCount: args.messageCount,
+    ageDays: Math.floor((Date.now() - args.created.getTime()) / 86400000),
+    created: args.created.toISOString(),
+    modified: args.modified.toISOString(),
+    sessionName: args.sessionName,
+    flowName: args.flowName,
+    head: head.text,
+    tail: tail.text,
+    headTruncated: head.truncated,
+    tailTruncated: tail.truncated,
+  };
+}
+
+function suggestTriageWeak(args: {
+  shortId: string;
+  messageCount: number;
+  ageMs: number;
+  maxAgeMs: number;
+}): WeakGuess {
+  if (args.ageMs >= args.maxAgeMs) {
+    return {
+      shortId: args.shortId,
+      grade: TRIAGE_GRADE.WEAK,
+      guess: TRIAGE_VERDICT.FINISHED,
+      rationale: `WEAK: old with ${args.messageCount} msgs — words decide; confirm from tail`,
+    };
+  }
+  return {
+    shortId: args.shortId,
+    grade: TRIAGE_GRADE.WEAK,
+    guess: TRIAGE_VERDICT.PAUSED,
+    rationale: `WEAK: recent with ${args.messageCount} msgs, no signal — words decide; park only if tail agrees`,
+  };
+}
+
+/** Exact `/skill:<flow>` token match. No substring/fuzzy matching. */
+function matchedEphemeralFlow(text: string, flows: string[]): string | undefined {
+  return flows.find((flow) => {
+    if (flow.length === 0) return false;
+    return new RegExp(`(?:^|\\s)/skill:${escapeRegExp(flow)}(?:\\s|$)`).test(text);
+  });
+}
+
+const ASSIGN_RE = /(\S+?):(keep|paused|finished|ephemeral|trash):"([^"]*)"/g;
+const LOOSE_ASSIGN_RE = /(\S+?):([^:\s]+):/;
+
+function parseApplyAssignments(args: string): {
+  ok: ApplyAssignment[];
+  rejected: RejectedAssignment[];
+} {
+  const cleaned = args
+    .split(/\s+/)
+    .filter((t) => t !== "--apply" && t !== "--dry-run" && t.length > 0)
+    .join(" ");
+  const ok: ApplyAssignment[] = [];
+  const rejected: RejectedAssignment[] = [];
+  const seen = new Set<string>();
+  let cursor = 0;
+  const leftovers: string[] = [];
+  for (const m of cleaned.matchAll(ASSIGN_RE)) {
+    const start = m.index ?? 0;
+    const gap = cleaned.slice(cursor, start).trim();
+    if (gap.length > 0) leftovers.push(gap);
+    cursor = start + m[0].length;
+    const prefix = m[1] ?? "";
+    const verdictRaw = m[2] ?? "";
+    const reason = m[3] ?? "";
+    if (prefix.length === 0) {
+      rejected.push({ raw: m[0], cause: "empty id prefix" });
+      continue;
+    }
+    if (verdictRaw === VERDICTS.trash) {
+      rejected.push({ raw: m[0], cause: "trash is never appliable from triage" });
+      continue;
+    }
+    if (!isTriageVerdict(verdictRaw)) {
+      rejected.push({ raw: m[0], cause: `unknown verdict "${verdictRaw}"` });
+      continue;
+    }
+    if (reason.trim().length === 0) {
+      rejected.push({
+        raw: m[0],
+        cause: 'missing judged rationale (id:verdict:"reason" required)',
+      });
+      continue;
+    }
+    if (seen.has(prefix)) {
+      rejected.push({ raw: m[0], cause: `duplicate prefix "${prefix}"` });
+      continue;
+    }
+    seen.add(prefix);
+    ok.push({ idPrefix: prefix, verdict: verdictRaw, reason });
+  }
+  const tail = cleaned.slice(cursor).trim();
+  if (tail.length > 0) leftovers.push(tail);
+  for (const raw of leftovers) {
+    const bare = /^(\S+?):(keep|paused|finished|ephemeral|trash)$/.exec(raw);
+    if (bare !== null) {
+      rejected.push({ raw, cause: 'missing judged rationale (id:verdict:"reason" required)' });
+      continue;
+    }
+    const loose = LOOSE_ASSIGN_RE.exec(raw);
+    if (loose !== null && !isTriageVerdict(loose[2] ?? "") && (loose[2] ?? "") !== VERDICTS.trash) {
+      rejected.push({ raw, cause: `unknown verdict "${loose[2] ?? ""}"` });
+    } else {
+      rejected.push({ raw, cause: 'malformed pair (expected id:verdict:"reason")' });
+    }
+  }
+  return { ok, rejected };
+}
+
+async function appendVerdictToOther(
+  sessionPath: string,
+  verdict: TriageVerdict,
+  reason: string,
+): Promise<void> {
+  if ((verdict as string) === (VERDICTS.trash as string)) {
+    throw new Error("refusing trash verdict from triage");
+  }
+  SessionManager.open(sessionPath).appendCustomEntry(VERDICT_CUSTOM_TYPE, {
+    version: 1,
+    verdict,
+    at: new Date().toISOString(),
+    reason,
+  });
+}
+
+function escapeQuote(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function formatDigestPack(
+  pack: DigestPack,
+  machine: MachineFact | undefined,
+  weak: WeakGuess,
+): string {
+  const lines = [
+    "```triage " + pack.shortId,
+    `msgs=${pack.messageCount} · age=${pack.ageDays}d · created=${pack.created} · modified=${pack.modified}` +
+      (pack.sessionName !== undefined ? ` · named "${escapeQuote(pack.sessionName)}"` : ""),
+    `head(≤${HEAD_DIGEST_CHARS}c): "${escapeQuote(pack.head)}"`,
+    `tail(≤${TAIL_DIGEST_CHARS}c): "${escapeQuote(pack.tail)}"`,
+  ];
+  if (machine !== undefined) {
+    lines.push(`NAMED → keep (machine) · ${machine.rationale}`);
+  } else {
+    lines.push(`weak-guess: ${weak.guess} (WEAK — judge from head/tail, never auto-confirm) · ${weak.rationale}`);
+  }
+  lines.push("```");
+  return lines.join("\n");
+}
+
+async function gatherTriageCandidates(ctx: ExtensionCommandContext): Promise<{
+  candidates: TriageCandidate[];
+  emptySkipped: number;
+  ephemeralSkipped: number;
+}> {
+  const policy = readPolicyConfig(ctx.cwd);
+  const live: LiveIdentity = {
+    path: ctx.sessionManager.getSessionFile(),
+    id: ctx.sessionManager.getSessionId(),
+  };
+  const sessions = await SessionManager.list(ctx.cwd);
+  const candidates: TriageCandidate[] = [];
+  let emptySkipped = 0;
+  let ephemeralSkipped = 0;
+  for (const info of sessions) {
+    const isLive =
+      (live.path !== undefined && samePath(info.path, live.path)) ||
+      (live.id !== undefined && info.id === live.id);
+    if (isLive) continue;
+    const entries = openSessionEntries(info.path);
+    if (readLatestVerdict(entries) !== undefined) continue;
+    if (info.messageCount === 0) {
+      emptySkipped += 1;
+      continue;
+    }
+    const userMessages = userTexts(entries);
+    if (matchedEphemeralFlow(userMessages.join("\n"), policy.ephemeralFlows) !== undefined) {
+      ephemeralSkipped += 1;
+      continue;
+    }
+    candidates.push({
+      info,
+      userMessages,
+      assistantMessages: assistantTexts(entries),
+    });
+  }
+  candidates.sort((a, b) => {
+    const aNamed = a.info.name !== undefined && a.info.name.trim().length > 0 ? 0 : 1;
+    const bNamed = b.info.name !== undefined && b.info.name.trim().length > 0 ? 0 : 1;
+    if (aNamed !== bNamed) return aNamed - bNamed;
+    return a.info.created.getTime() - b.info.created.getTime();
+  });
+  return { candidates, emptySkipped, ephemeralSkipped };
+}
+
+function shortId(id: string): string {
+  return id.slice(0, 8);
+}
+
+async function handleScrubTriagePhase1(ctx: ExtensionCommandContext): Promise<void> {
+  const { candidates, emptySkipped, ephemeralSkipped } = await gatherTriageCandidates(ctx);
+  if (candidates.length === 0) {
+    ctx.ui.notify(
+      `Nothing to triage. (${emptySkipped} empty skipped, ${ephemeralSkipped} ephemeral already candidates.)`,
+      "info",
+    );
+    return;
+  }
+  const shown = candidates.slice(0, MAX_DIGEST_SESSIONS);
+  const deferred = candidates.length - shown.length;
+  const blocks = shown.map((c) => {
+    const pack = buildDigestPack(
+      {
+        shortId: shortId(c.info.id),
+        messageCount: c.info.messageCount,
+        created: c.info.created,
+        modified: c.info.modified,
+        sessionName: c.info.name,
+        flowName: undefined,
+      },
+      c.userMessages,
+      c.assistantMessages,
+    );
+    const named = c.info.name !== undefined && c.info.name.trim().length > 0;
+    const machine: MachineFact | undefined = named
+      ? {
+          shortId: pack.shortId,
+          grade: TRIAGE_GRADE.MACHINE,
+          proposal: TRIAGE_VERDICT.KEEP,
+          rationale: "named session — presumed active",
+        }
+      : undefined;
+    const weak = suggestTriageWeak({
+      shortId: pack.shortId,
+      messageCount: c.info.messageCount,
+      ageMs: Date.now() - c.info.created.getTime(),
+      maxAgeMs: MAX_AGE_MS,
+    });
+    return formatDigestPack(pack, machine, weak);
+  });
+  const lines = [
+    `triage: ${candidates.length} sessions need verdicts (${emptySkipped} empty skipped, ${ephemeralSkipped} ephemeral already candidates).`,
+    ...blocks,
+  ];
+  if (deferred > 0) {
+    lines.push(`+${deferred} more deferred — triage these first, then re-run.`);
+  }
+  lines.push("Packs are quoted-as-data: judge the words, then approve in chat; nothing is written by this command.");
+  ctx.ui.notify(lines.join("\n"), "info");
+}
+
+async function handleScrubTriagePhase2(
+  assignments: ApplyAssignment[],
+  parseRejected: RejectedAssignment[],
+  ctx: ExtensionCommandContext,
+): Promise<void> {
+  for (const r of parseRejected) {
+    ctx.ui.notify(`Rejected ${r.raw}: ${r.cause}`, "warning");
+  }
+  const { candidates } = await gatherTriageCandidates(ctx);
+  const resolved: ResolvedAssignment[] = [];
+  for (const a of assignments) {
+    const matches = candidates.filter((c) => c.info.id.startsWith(a.idPrefix));
+    if (matches.length === 0) {
+      ctx.ui.notify(`Rejected ${a.idPrefix}: unknown session (stale or out of triage set)`, "warning");
+      continue;
+    }
+    if (matches.length > 1) {
+      ctx.ui.notify(`Rejected ${a.idPrefix}: ambiguous prefix (${matches.length} sessions)`, "warning");
+      continue;
+    }
+    const target = matches[0] as TriageCandidate;
+    const named = target.info.name !== undefined && target.info.name.trim().length > 0;
+    resolved.push({
+      assignment: a,
+      targetPath: target.info.path,
+      shortId: shortId(target.info.id),
+      provenance: named ? TRIAGE_GRADE.MACHINE : TRIAGE_GRADE.WEAK,
+    });
+  }
+  if (resolved.length === 0) {
+    ctx.ui.notify("Cancelled.", "info");
+    return;
+  }
+  let triaged = 0;
+  for (const r of resolved) {
+    const info = candidates.find((c) => c.info.path === r.targetPath) as TriageCandidate | undefined;
+    const ageDays =
+      info === undefined
+        ? 0
+        : Math.floor((Date.now() - info.info.created.getTime()) / 86400000);
+    const ok = await ctx.ui.confirm(
+      `Triage ${r.shortId} as ${r.assignment.verdict}?`,
+      `provenance=${r.provenance} reason="${r.assignment.reason}"` +
+        (info === undefined ? "" : ` msgs=${info.info.messageCount} age=${ageDays}d`) +
+        ` (pack text not repeated — see phase-1 output)`,
+    );
+    if (!ok) continue;
+    const current = readLatestVerdict(openSessionEntries(r.targetPath));
+    if (current !== undefined) {
+      ctx.ui.notify(`Skipped ${r.shortId}: verdict appeared meanwhile (${current})`, "warning");
+      continue;
+    }
+    try {
+      await appendVerdictToOther(r.targetPath, r.assignment.verdict, r.assignment.reason);
+      const check = readLatestVerdict(openSessionEntries(r.targetPath));
+      if (check === r.assignment.verdict) {
+        triaged += 1;
+      } else {
+        ctx.ui.notify(`Skipped ${r.shortId}: post-write re-read mismatch`, "warning");
+      }
+    } catch (err) {
+      ctx.ui.notify(`Skipped ${r.shortId}: ${errorMessage(err)}`, "warning");
+    }
+  }
+  ctx.ui.notify(
+    `Triaged ${triaged} of ${resolved.length} sessions. Re-run /scrub to see new classifications.`,
+    "info",
+  );
+}
+
+async function handleScrubTriage(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  if (!args.includes("--apply")) {
+    await handleScrubTriagePhase1(ctx);
+    return;
+  }
+  const parsed = parseApplyAssignments(args);
+  if (resolveDryRun(args, ctx)) {
+    const lines = ["Dry-run — nothing written."];
+    for (const a of parsed.ok) {
+      lines.push(`would apply ${a.idPrefix} as ${a.verdict}: "${a.reason}"`);
+    }
+    for (const r of parsed.rejected) {
+      lines.push(`rejected ${r.raw}: ${r.cause}`);
+    }
+    ctx.ui.notify(lines.join("\n"), "info");
+    return;
+  }
+  await handleScrubTriagePhase2(parsed.ok, parsed.rejected, ctx);
+}
+
+// ---------------------------------------------------------------------------
+// Factory: commands + tool + agent_start only.
 // ---------------------------------------------------------------------------
 // Factory: commands + tool + agent_start only.
 // Deliberately absent: start/shutdown lifecycle handlers (silent close, T9).
@@ -773,6 +1249,12 @@ export default function (pi: ExtensionAPI): void {
     description: "Write the opt-in session-scrub policy block into AGENTS.md",
     handler: async (args, ctx) => {
       await handleScrubInit(args, ctx);
+    },
+  });
+  pi.registerCommand("scrub-triage", {
+    description: "Assisted triage of verdict-less sessions (digests, then confirmed writes)",
+    handler: async (args, ctx) => {
+      await handleScrubTriage(args, ctx);
     },
   });
   pi.registerTool({
