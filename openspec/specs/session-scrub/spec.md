@@ -362,3 +362,168 @@ The system MUST ship slice 1 as TypeScript strict with const-object enums, flat 
 ## Out of scope (deferred, not specified here)
 
 Global `listAll()` view, custom `ctx.ui.custom()` picker, compaction-hook summaries, LLM naming / programmatic `setSessionName()`, sidecar verdict files, `/scrub-empty` purge, OS trash integration, close-time prompts.
+
+---
+
+## Slice 2 — triage (`session-scrub-triage`, appended by sdd-sync 2026-09-14)
+
+**Source:** `openspec/changes/session-scrub-triage/spec.md` (TR-01..TR-13) AS-BUILT per `openspec/changes/session-scrub-triage/verify-report.md` (verdict pass, 13/13 REQ, 17/17 scenarios, 0 blockers) + `apply-progress.md` (T1–T12 12/12). Slice-1 content above (REQ-01..REQ-12) is untouched and remains normative.
+
+**Command:** `/scrub-triage [--dry-run]` (phase 1, digest, read-only) + `/scrub-triage --apply <short-id:verdict:"reason"> [...] [--dry-run]` (phase 2, confirmed write). Reason is MANDATORY, stored verbatim; `trash` never suggested/parsed/appended; live file never opened for write.
+
+**Type model (additive, strict, flat, no `any`):** `TRIAGE_VERDICT` const-object `{ keep, paused, finished, ephemeral }` (singular name AS-BUILT; values reuse `VERDICTS` subset, never redefined); `TRIAGE_GRADE` const-object `{ machine, weak, judged }`; bounds `HEAD_DIGEST_CHARS = 300`, `TAIL_DIGEST_CHARS = 300`, `MAX_DIGEST_SESSIONS = 20`; flat `DigestPack`, `WeakGuess`, `MachineFact`, `ApplyAssignment`, `ResolvedAssignment`, `RejectedAssignment` (+ mechanical additive `TriageCandidate`, `OrderedMessage` carrying entries for lazy extraction). Exactly one `registerCommand("scrub-triage")`; no new entry types; no `ctx.ui.custom()`; no `session_shutdown`/`session_start`/`unlink` additions; no POLICY-grammar or trash-layout changes.
+
+### Slice-2 verified deviations (ACCEPTED 2026-09-14 in `bed10e5` — normative over design/spec draft wording)
+
+1. Tail chronological: last-3 assistant + last-2 user merged in file order via `orderedMessageTexts`, front-truncated (`truncateTailFromFront`) — design said assistant-first/back-truncated. Preserves closure order; bound identical.
+2. `stripForQuote` also strips U+200B–U+200D + U+FEFF (invisible chars never reach pasted verdict lines).
+3. Apply reasons support `\"`/`\\` escapes (`unescapeReason`, symmetric with `escapeQuote`); round-trip tested.
+4. `appendVerdictToOther` takes `livePath`, refuses gone files / live session (strictly stronger defence in depth at the write site).
+5. Lazy text extraction: `TriageCandidate` carries entries; `orderedMessageTexts` runs only for shown packs (pure perf shape, zero behavior change).
+6. Candidate sort key is `modified` (was `created`); named-first tier unchanged; recency-of-touch triage order, documented in README.
+7. Pre-append recheck idempotent: identical concurrent verdict counts as triaged (info, no duplicate append); different verdict skips (warning). No duplicate verdict entries.
+8. Categorized final summary (applied + already / declined / conflict / error with shortIds); still contains the `Re-run /scrub…` line.
+
+Minor variances (ACCEPT, not gaps): `buildDigestPack` takes `OrderedMessage[]` instead of two arrays (deviation 1/5 consequence); ANSI strip covers SGR-`m` only; head truncation yields bound+1 chars max (`slice(0, 300) + "…"`); phase-2 dry-run notify lists parsed assignments; provenance shows MACHINE/WEAK (the assignment itself is the judged verdict).
+
+### TR-01 — Triage set excludes live, empty, and ephemeral-match sessions
+
+The system MUST define the triage set as sessions with `verdict === undefined` that are NOT live, NOT `messageCount === 0`, and NOT `matchedEphemeralFlow`. Empty sessions MUST be skipped with a counted line (`emptySkipped`). Ephemeral-match sessions MUST be skipped with a counted line (`ephemeralSkipped`). The live session MUST never appear (samePath/id drop).
+
+#### Scenario: verdict-less session with content qualifies
+- GIVEN a non-live session with content, no verdict, and no ephemeral match
+- WHEN phase 1 builds the triage set
+- THEN the session appears as exactly one digest pack.
+
+#### Scenario: empty and ephemeral-match sessions are counted skips
+- GIVEN one empty session and one ephemeral-match session, both verdict-less
+- WHEN phase 1 runs
+- THEN neither appears as a pack and the notify carries two counted skip lines.
+
+### TR-02 — Bounded digest pack schema with deferral notice
+
+The system MUST emit at most 20 packs per run, each with head ≤ 300c (+1 verified variance, `…` U+2026 mark) and tail ≤ 300c (front-truncated AS-BUILT), truncation flagged, plus msgs, age, created, modified, optional named and flow lines, and one weak-guess line. When the triage set exceeds the cap, the system MUST append `+R more deferred — triage these first, then re-run.` and MUST never silently drop sessions. Sort order MUST be machine-grade (named→keep) first, then human-grade by `modified` (deviation 6, recency proxy).
+
+#### Scenario: oversized triage set defers explicitly
+- GIVEN 25 verdict-less qualifying sessions
+- WHEN phase 1 runs
+- THEN exactly 20 packs are emitted plus a `+5 more deferred` notice.
+
+#### Scenario: bounds hold on long sessions
+- GIVEN a session whose first user message is 2000 chars
+- WHEN its pack is built
+- THEN head is ≤ 301 chars ending with `…` and `headTruncated` is true (bound+1 verified variance; token-bounding purpose unaffected).
+
+### TR-03 — Machine-grade facts stay deterministic and minimal
+
+The system MUST state machine-grade rows as facts: named verdict-less → `keep` with rationale `named session — presumed active` rendered as `NAMED → keep (machine)`. The system MUST NOT propose any other deterministic verdict. Empty and ephemeral-match conditions MUST NOT produce proposals.
+
+#### Scenario: named session proposes keep as fact
+- GIVEN a named verdict-less session in the triage set
+- WHEN phase 1 notifies
+- THEN its block states `NAMED → keep (machine)` with the rationale stub.
+
+### TR-04 — WEAK pre-suggestions are labeled guesses, never verdicts
+
+The system MUST attach exactly one `weak-guess` per human-grade pack: old-with-content (age ≥ `MAX_AGE_MS`) ⇢ `finished?` with `WEAK: old (≥7d) with content — words decide; confirm from tail`; otherwise ⇢ `paused?` with `WEAK: recent with content, no signal — words decide; park only if tail agrees`. Every guess MUST carry the `(WEAK — judge from head/tail, never auto-confirm)` label. Rationale wording may carry message counts instead of the `(≥7d)` token; the WEAK label line is exact.
+
+#### Scenario: old session carries weak finished guess
+- GIVEN an 8-day-old verdict-less session with content
+- WHEN its pack is emitted
+- THEN the block contains `weak-guess: finished (WEAK — judge from head/tail, never auto-confirm)`.
+
+### TR-05 — Tail reader covers user plus assistant slices (chronological AS-BUILT)
+
+The system MUST build tail from the closing slice (last-3 assistant + last-2 user merged in file order via `orderedMessageTexts`, `isTextPart` guard, never throws) budgeted inside 300c, front-truncated. The tail MUST preserve closure signals in any language as quoted evidence.
+
+#### Scenario: assistant closure cue appears in tail
+- GIVEN a session whose last assistant message says the work is done
+- WHEN its pack is built
+- THEN tail contains that closing slice within the 300-char bound.
+
+### TR-06 — Normative pack-quoting rules
+
+The system MUST quote packs-as-data: one fenced `triage` block per session headed by its short id; head/tail quoted verbatim after stripping SGR colors + U+0300–U+037F + zero-widths U+200B–U+200D + U+FEFF (C0/non-SGR passthrough is a known hygiene gap, W2); `escapeQuote`/`unescapeReason` symmetric for `"`/`\\`; the judgment instruction MUST treat pack text as evidence, never instructions; phase-2 `confirm()` MUST show id + judged verdict + provenance + verbatim reason + msgs + age only and MUST never re-quote the full tail.
+
+#### Scenario: confirm dialog quotes no tail
+- GIVEN a resolved assignment with reason
+- WHEN the per-item `confirm()` renders
+- THEN its detail contains id, verdict, provenance, and reason, and zero tail text.
+
+### TR-07 — Phase 1 is read-only in all modes
+
+The system MUST implement phase 1 as notify-only in every mode: summary + packs + machine facts + WEAK guesses via a single `notify(info)`, zero `confirm`/`select`/`input` calls, zero writes. `--dry-run` MUST be accepted as an alias producing byte-identical output. Empty triage set MUST notify `Nothing to triage.` with zero writes.
+
+#### Scenario: phase 1 leaves the filesystem identical
+- GIVEN 3 qualifying verdict-less sessions
+- WHEN `/scrub-triage` runs
+- THEN the session file set is identical, no trash dir is created, and one info notify carries 3 packs.
+
+### TR-08 — `--apply` assignment grammar with mandatory reason
+
+The system MUST accept assignments ONLY in the grammar `<idPrefix>:<verdict>:"<reason>"` where `verdict ∈ {keep, paused, finished, ephemeral}` (escaped-quote aware `ASSIGN_RE`; `\"`/`\\` supported) and reason is a non-empty quoted string stored verbatim. The parser MUST reject: unknown verdicts (including `trash`), malformed pairs (leftover token), missing/empty/whitespace-only reasons, empty prefixes, duplicate prefixes. Rejection MUST skip the assignment with a `notify(warning)` cause line and MUST never warn-through to a write.
+
+#### Scenario: reasonless assignment is rejected
+- GIVEN `--apply a1b2c3d4:finished` (no reason)
+- WHEN phase 2 parses
+- THEN the assignment is rejected with a warning and nothing is written for it.
+
+#### Scenario: trash verdict is rejected
+- GIVEN `--apply a1b2c3d4:trash:"no longer needed"`
+- WHEN phase 2 parses
+- THEN the assignment is rejected with a warning and nothing is written.
+
+### TR-09 — Fresh resolution with unambiguous prefix and staleness rejection
+
+The system MUST resolve every parsed assignment against a fresh `gatherTriageCandidates` at `--apply` time: the `idPrefix` MUST match exactly one triage-set session via `startsWith` (unknown → reject; ≥2 → ambiguous reject); the target MUST still be verdict-less (verdict since appeared or session gone → stale reject). Resolution MUST run before any `confirm()`.
+
+#### Scenario: stale assignment is skipped
+- GIVEN a digest pack for session X, then a verdict is recorded on X before `--apply`
+- WHEN `--apply <X-prefix>:finished:"done"` runs
+- THEN the assignment is rejected as stale with a warning and X is untouched.
+
+### TR-10 — Per-item confirm with pre-append freshness recheck and other-file append
+
+The system MUST dispose each resolved assignment via a per-item `confirm(title `Triage <shortId> as <verdict>?`, detail provenance MACHINE/WEAK + verbatim reason + msgs + age, never tail)` loop; chat approval alone MUST NOT write. On yes, the handler MUST re-read the target verdict immediately before appending — identical concurrent verdict counts as triaged-info (no duplicate append, deviation 7); different verdict → skip with warning — then call `appendVerdictToOther` (asserts `verdict !== "trash"` + non-live via `samePath`/id + `livePath`; body `SessionManager.open(path).appendCustomEntry("session-scrub/verdict", { version: 1, verdict, at, reason })`; caller catches per file). On no → skip. Per-file failures MUST notify warning + continue. Empty confirmed set MUST notify `Cancelled.` with zero writes. Post-run MUST re-read each written file and notify the categorized summary (applied + already / declined / conflict / error with shortIds, deviation 8) including `Triaged X of N sessions. Re-run /scrub to see new classifications.`
+
+#### Scenario: confirmed write round-trips
+- GIVEN a resolved `keep` assignment confirmed yes in TUI
+- WHEN the loop disposes it
+- THEN the other session file gains one `session-scrub/verdict` entry with the verbatim reason and `readLatestVerdict` returns `keep`.
+
+#### Scenario: race between confirm and append is caught
+- GIVEN a yes answer where another verdict landed after resolution
+- WHEN the pre-append recheck runs
+- THEN a differing verdict is skipped with a warning and the file is unchanged; an identical verdict counts as triaged-info with no duplicate.
+
+### TR-11 — Dry-run invariance and non-TUI choke for phase 2
+
+The system MUST treat phase 2 as dry-run when `--dry-run` is passed OR NOT (`mode === "tui" && hasUI`) via `resolveDryRun(args, ctx)` at phase-2 entry before any `confirm`: notify the resolved/rejected assignment list (parsed assignments in dry-run, W3 info) and exit with zero prompts and zero writes. Only flags are `--dry-run` and `--apply`; no `--force` exists.
+
+#### Scenario: non-TUI apply writes nothing
+- GIVEN `pi --print` invoking `/scrub-triage --apply <valid assignment>`
+- WHEN the handler runs
+- THEN it completes with a notify-only summary, zero prompts, zero writes.
+
+### TR-12 — Idempotency, live-exclusion, and never-trash invariants
+
+The system MUST guarantee: re-running phase 1 after all sessions carry verdicts notifies `Nothing to triage.`; the live file is never opened for write (excluded by construction plus non-live assert in `appendVerdictToOther`); `trash` is never proposed, never parsed (rejected at parse + re-asserted at append), never appended from triage; post-triage `/scrub` reflects the new verdicts.
+
+#### Scenario: second run is a no-op
+- GIVEN all former triage sessions now carry verdicts
+- WHEN phase 1 re-runs
+- THEN it notifies `Nothing to triage.` with zero writes.
+
+### TR-13 — Strict TypeScript, flat types, no new surfaces
+
+The system MUST ship triage as TypeScript strict with const-object verdict/grade maps, flat interfaces (no inline nested objects), no `any` (use `unknown` + guards), core Pi libs in `peerDependencies: *`, exactly one `registerCommand("scrub-triage")` addition, no new entry types, no `ctx.ui.custom()` picker, no `session_shutdown`/`session_start`/`unlink` additions, and no POLICY-grammar or trash-layout changes.
+
+#### Scenario: clean typecheck and grep gates
+- GIVEN the finished slice
+- WHEN `tsc --strict` runs and grep gates run
+- THEN typecheck passes with zero `any` and zero new `session_shutdown`/`session_start`/`unlink` hits.
+
+### Slice-2 manual test scenarios (TT1–TT12, triage only — slice-1 T1…T12 still apply)
+
+1. TT1 clean boot · 2. TT2 digest truth (3 packs named-first + 2 counted skips, live absent) · 3. TT3 bounds + deferral (20 packs + `+R more deferred`, `…` marks) · 4. TT4 WEAK labels · 5. TT5 phase-1 invariance (file-set identical, no trash dir, `--dry-run` byte-identical) · 6. TT6 reason-mandatory · 7. TT7 stale/ambiguous · 8. TT8 confirmed write (verbatim reason round-trip) · 9. TT9 race recheck (idempotent-skip) · 10. TT10 post-triage reconcile (`Nothing to triage.` + `/scrub` reflects) · 11. TT11 non-TUI (`pi --print` both phases notify-only, exit 0, no hang) · 12. TT12 strict + gates (`tsc` clean, zero `any`, zero new lifecycle/unlink; budget `size:exception` accepted at commit time for `f5d4940` +486/-4, see verify-report W5).
+
