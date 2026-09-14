@@ -527,3 +527,126 @@ The system MUST ship triage as TypeScript strict with const-object verdict/grade
 
 1. TT1 clean boot · 2. TT2 digest truth (3 packs named-first + 2 counted skips, live absent) · 3. TT3 bounds + deferral (20 packs + `+R more deferred`, `…` marks) · 4. TT4 WEAK labels · 5. TT5 phase-1 invariance (file-set identical, no trash dir, `--dry-run` byte-identical) · 6. TT6 reason-mandatory · 7. TT7 stale/ambiguous · 8. TT8 confirmed write (verbatim reason round-trip) · 9. TT9 race recheck (idempotent-skip) · 10. TT10 post-triage reconcile (`Nothing to triage.` + `/scrub` reflects) · 11. TT11 non-TUI (`pi --print` both phases notify-only, exit 0, no hang) · 12. TT12 strict + gates (`tsc` clean, zero `any`, zero new lifecycle/unlink; budget `size:exception` accepted at commit time for `f5d4940` +486/-4, see verify-report W5).
 
+---
+
+## Slice 3 — triage UX (`session-scrub-triage-ux`, appended by sdd-sync 2026-09-14)
+
+**Source:** `openspec/changes/session-scrub-triage-ux/spec.md` (legacy flat delta, UX-01..UX-08) AS-BUILT per `openspec/changes/session-scrub-triage-ux/verify-report.md` (verdict pass, 8/8 REQ, 15/15 scenarios, 0 blockers, 0 critical) + `tasks.md` (T1–T12 12/12) + code `dcf567c` (+457/-112) + meta `1002e04`. Slice-1 (REQ-01..REQ-12) and Slice-2 (TR-01..TR-13) content above is untouched and remains normative. This section is additive only; no Slice-1/2 requirement was modified or removed in the canonical file.
+
+**Command:** `/scrub-triage [--verbose] [--dry-run]` (phase 1) + `/scrub-triage --apply <assignment> [...] [--verbose] [--dry-run]` (phase 2). Only flags are `--apply`, `--dry-run`, `--verbose`; no `--force` exists. Triage set unchanged (TR-01): verdict-less AND non-live AND non-empty AND non-ephemeral-match. Named-exclusion explicitly OUT — named sessions stay in the triage set; only their confirm path is fast-laned.
+
+**Type model (additive, strict, flat, no `any`):** `MachineKeepBulk { shortIds: string[]; rationale: string }` (confirm-time view only, not persisted), `RenameAssignment { idPrefix: string; slug: string }`, `ResolvedRename { assignment: RenameAssignment; targetPath: string; shortId: string; existingName: string | undefined }`, `RejectedRename { raw: string; cause: string }`. Slice-2 maps/bounds reused verbatim (`TRIAGE_VERDICT`, `TRIAGE_GRADE`, `HEAD_DIGEST_CHARS = 300`, `TAIL_DIGEST_CHARS = 300`, `MAX_DIGEST_SESSIONS = 20`). Still exactly one `registerCommand("scrub-triage")`; no new entry types beyond `session-scrub/verdict` + `session_info`; no `ctx.ui.custom()`; no `session_shutdown`/`session_start`/`unlink` additions.
+
+**AS-BUILT deviations (ACCEPTED in verify-report, normative):** (1) Phase-1 visual order is WEAK-packs-then-machine-table (spec UX-01 scenario + TU1 govern over design §7 machine-first listing; machine rows stay compact-only by default either way). (2) Dry-run choke lives post-resolve inside phase 2 (design §7 provenance/existing→proposed/bulk-date preview needs resolution; non-TUI notify-only preserved). W1 (no TDD Cycle Evidence table; manual TU1–TU8 + 45-check harness convention, same as Slice-2) is a warning, not a blocker. W2 (`size:exception` +457/-112 accepted by user, recorded in `dcf567c` commit message) is a process note, not a correctness blocker.
+
+### UX-01 — WEAK-first page composition with machine fill to cap 20
+
+The system MUST compose phase-1 page 1 as WEAK-first + machine fill to cap `MAX_DIGEST_SESSIONS` (20, unchanged): in-memory `partitionTriageCandidates` over the already-gathered list (machine-keep ⟺ `info.name` non-blank after trim; rest → weakQueue; no second `list()`/`open()`), `weakQueue` by `modified` descending first, then `machineKeeps` in gather order stable; `page = ordered.slice(0, 20)`, `deferred = ordered.slice(20)`. Deferred membership changes by design: machine-keeps defer, not WEAK packs. Supersedes TR-02 named-first display order for page composition; `gatherTriageCandidates` internal behavior unchanged.
+
+#### Scenario: WEAK packs lead page 1 in a 27-session run
+- GIVEN 27 qualifying sessions (7 WEAK + 20 named machine-keeps)
+- WHEN phase 1 composes page 1
+- THEN all 7 WEAK rows appear before any machine row and the page holds at most 20 rows total.
+
+#### Scenario: machine-keeps defer, not WEAK
+- GIVEN 25 qualifying sessions (5 WEAK + 20 machine-keeps, cap 20)
+- WHEN phase 1 runs
+- THEN all 5 WEAK rows are shown and the deferred line (UX-06) lists only machine-keep shortIds.
+
+### UX-02 — Compact table default with `--verbose` full packs
+
+The system MUST render phase 1 as a compact table by default with schema `<short> · <msgs>msgs · <age>d · [named "<name>" | unnamed] · <weak-guess> · <head-first-~120c>` (prefix of the already-built head sliced to 120 chars + `…` when longer, `escapeQuote` on render; name via `named "<escapeQuote(name)>"`, else literal `unnamed`). Default (no flag): compact rows for shown machine sessions + full `formatDigestPack` blocks for shown WEAK sessions only, zero machine full packs. `--verbose`: compact table always present + full packs for every shown session. Full-pack-only content (full 300c head, 300c chronological tail, ISO created/modified, rationale stubs) MUST never appear in compact rows. Flag parsed as `verbose = args.split(/\s+/).includes("--verbose")`, threaded into phase 1 and phase-2 echo; `--verbose` added to the parse-cleaning strip list. Supersedes TR-02/TR-06 full-pack-per-session default.
+
+#### Scenario: default run shows machine table plus WEAK packs
+- GIVEN 3 machine-keeps and 2 WEAK sessions
+- WHEN `/scrub-triage` runs without flags
+- THEN one notify carries 3 compact machine rows plus 2 WEAK full packs, and zero machine full packs.
+
+#### Scenario: verbose restores full packs
+- GIVEN the same 5 sessions
+- WHEN `/scrub-triage --verbose` runs
+- THEN the notify carries full packs for all 5 shown sessions plus the compact table.
+
+### UX-03 — Machine-keep fast-lane bulk confirm with fixed dated default rationale
+
+The system MUST fast-lane the machine-keep subset (`resolved.filter(provenance === MACHINE && verdict === KEEP)`) through exactly ONE bulk `confirm()`: title `Keep <N> machine sessions? (<short1>, <short2>, …)`, detail shared rationale + per-file msgs/age fragments, never tail. Rationale MUST be the fixed string `machine keep, bulk-confirmed <YYYY-MM-DD>` where `<YYYY-MM-DD>` is the UTC date of the `--apply` run (`toISOString().slice(0, 10)`), computed once, stored verbatim as `reason` per file in each `session-scrub/verdict { version: 1, verdict: "keep", at, reason }` entry. On yes: per-file body identical to Slice-2 (pre-append `readLatestVerdict` recheck, try/catch append, post-write re-read, shared counters); on no: all bulk shortIds → `declined`, zero writes. Mixed sets MUST bulk-confirm machine first, then the WEAK per-item loop. Bulk confirm MUST never include WEAK rows.
+
+#### Scenario: one confirm writes the default rationale verbatim to every machine file
+- GIVEN 5 resolved machine-keep `keep` assignments confirmed yes in the single bulk confirm (TUI)
+- WHEN the loop disposes them
+- THEN each of the 5 files gains one `session-scrub/verdict` entry with `reason` exactly `machine keep, bulk-confirmed <today-UTC-date>` and `readLatestVerdict` returns `keep` for each.
+
+#### Scenario: bulk confirm never covers WEAK
+- GIVEN a mixed set of 2 machine-keeps + 1 WEAK assignment
+- WHEN phase 2 confirms
+- THEN the bulk confirm lists only the 2 machine shortIds and the WEAK assignment is disposed via its own per-item confirm.
+
+### UX-04 — Reason stays mandatory for WEAK and judged verdicts
+
+The system MUST keep `reason` mandatory for every WEAK/judged assignment (`<idPrefix>:<verdict>:"<reason>"`, `verdict ∈ {keep, paused, finished, ephemeral}`, non-empty quoted reason stored verbatim). Parser accepts bare `<prefix>:keep` provisionally (`reason: ""`) for the UX-03 bulk path only; bare `paused|finished|ephemeral` stays rejected (`missing judged rationale`), bare `trash` rejected (`trash never appliable`). Post-resolve provenance gate: reasonless keep on MACHINE inherits the bulk rationale; on WEAK/unknown/ambiguous/stale → rejected (`reasonless keep is machine-only — WEAK needs id:keep:"reason"`), warning, zero writes.
+
+#### Scenario: reasonless WEAK assignment is rejected
+- GIVEN `--apply a1b2c3d4:finished` targeting a WEAK session
+- WHEN phase 2 parses/resolves
+- THEN the assignment is rejected with a warning and nothing is written for it.
+
+#### Scenario: whitespace-only reason is rejected
+- GIVEN `--apply a1b2c3d4:paused:"   "`
+- WHEN phase 2 parses
+- THEN the assignment is rejected with a warning and nothing is written for it.
+
+### UX-05 — Inline rename in triage flow
+
+The system MUST accept renames as own lines `id:name:"slug"`, parallel to verdict triples, parsed alongside via `RENAME_RE = /(\S+?):name:"((?:[^"\\]|\\.)*)"/g` with shared-cursor merge (rename tokens never surface as verdict `malformed pair` leftovers and vice versa). Slug norm: `unescapeReason(raw).replace(/[\r\n]+/g, " ").trim()`; empty-after-trim → rejected `empty rename slug`, never writes (clear-by-empty NOT exposed in triage). Duplicate `idPrefix` across rename ok-list or verdict/rename collision → second rejected `duplicate assignment`; first proceeds. No charset/length/uniqueness checks — duplicates allowed, last-write-wins per file, identity stays path (mirrors `/name`). Writer `appendRenameToOther(sessionPath, slug, livePath?)` (throwing; mirrors `appendVerdictToOther`: `existsSync` gone-file refusal + live refusal via `samePath`/id; slug non-empty re-assert; body `SessionManager.open(path).appendSessionInfo(slug)`, append-only) + existing-name surfacing (`existingName` from resolve-time `info.name`) + post-write re-read (`getSessionName()` equality, mismatch → warning + error bucket). Confirm is per-item `confirm(title Rename <short> to "<slug>"?, detail existing="<existing ?? (unnamed)>" → proposed="<slug>" · msgs · age)` even when verdicts bulk-confirm. Resolve reuses fresh-resolve order (unknown/ambiguous/stale reject before any confirm).
+
+#### Scenario: rename round-trips to /resume
+- GIVEN `--apply a1b2c3d4:name:"auth-flow"` confirmed yes in TUI
+- WHEN the rename loop disposes it
+- THEN the target file gains one `session_info` entry and a fresh open reads `getSessionName()` as `auth-flow`, visible in `/resume`.
+
+#### Scenario: duplicate slugs allowed, identity stays path
+- GIVEN two sessions renamed to the same slug `"auth-flow"`, both confirmed
+- WHEN both appends complete
+- THEN both files read `auth-flow` and each remains addressable by its own shortId/path.
+
+#### Scenario: empty slug rejected, overwrite visible
+- GIVEN `--apply a1b2c3d4:name:"   "` and a rename targeting a session already named `"old-name"`
+- WHEN phase 2 parses and confirms
+- THEN the empty slug is rejected with a warning and zero writes, and the valid rename's confirm detail contains both the new slug and the existing name `old-name`.
+
+### UX-06 — Transparent deferred shortId list
+
+The system MUST replace the opaque `+R more deferred` line with `deferred (<R>): <short1>, <short2>, …` listing `ordered.slice(20)` shortIds in UX-01 page order (+ optional msgs/age only if bounded; no packs, no guesses; deferred rows never reach `buildDigestPack`/`suggestTriageWeak`). The system MUST never silently drop sessions; every candidate is either paged or listed. Supersedes TR-02 `+R more deferred — triage these first, then re-run.` line.
+
+#### Scenario: deferred identities are visible
+- GIVEN 25 qualifying sessions (cap 20)
+- WHEN phase 1 runs
+- THEN the notify ends with a deferred line listing exactly the 5 deferred shortIds in page order.
+
+### UX-07 — Slice-2 safety invariants restated (untouched)
+
+The system MUST preserve all Slice-2 safety invariants unchanged under the UX layer: fresh resolve at `--apply` time (`startsWith` prefix, unknown/ambiguous/stale reject before any confirm); WEAK per-item `confirm()` retained (title `Triage <shortId> as <verdict>?`, detail provenance MACHINE/WEAK + verbatim reason + msgs + age, never tail); pre-append recheck immediately before each append (identical concurrent verdict counts as triaged-info with no duplicate, different verdict skips with warning); `trash` never suggested, never parsed (rejected at parse + re-asserted at append), never appended; dry-run choke + non-TUI notify-only with zero prompts and zero writes; live-exclusion (live never opened for write, asserted at write site); append-only writes with post-write re-read and categorized summary; per-file try/catch + continue; empty confirmed set notifies `Cancelled.` with zero writes.
+
+#### Scenario: race between confirm and append is caught under bulk
+- GIVEN a bulk-confirmed machine `keep` where another verdict landed after resolution
+- WHEN the per-file pre-append recheck runs
+- THEN a differing verdict is skipped with a warning and the file is unchanged; an identical verdict counts as triaged-info with no duplicate append.
+
+#### Scenario: non-TUI apply writes nothing
+- GIVEN `pi --print` invoking `/scrub-triage --apply <valid assignment>`
+- WHEN the handler runs
+- THEN it completes with a notify-only summary, zero prompts, zero writes.
+
+### UX-08 — Strict TypeScript, flat types, no new surfaces, budget
+
+The system MUST ship the UX layer as TypeScript strict with const-object verdict/grade maps, flat interfaces (no inline nested objects), no `any` (zero code `any`; 3 `any` hits are English comment words only), core Pi libs in `peerDependencies: *`, still exactly one `registerCommand("scrub-triage")` (5 commands total, unchanged), no new entry types beyond `session-scrub/verdict` + `session_info`, no `ctx.ui.custom()` picker, no `session_shutdown`/`session_start`/`unlink` additions, and no POLICY-grammar, trash-layout, triage-set, or scope changes. Docs/meta in a separate commit from code (T12 `1002e04`). Budget: code `dcf567c` +457/-112 (net new ≈ 345); `size:exception` accepted by the user (preflight + commit message), recorded here; it does not change the 400-line review-budget rule.
+
+#### Scenario: clean typecheck and grep gates
+- GIVEN the finished change
+- WHEN `tsc --strict` runs and grep gates run
+- THEN typecheck passes with zero code `any` and zero new `session_shutdown`/`session_start`/`unlink`/`ctx.ui.custom` hits.
+
+### Slice-3 manual test scenarios (TU1–TU8, UX only — Slice-1 T1…T12 and Slice-2 TT1…TT12 still apply)
+
+1. TU1 WEAK-first page (7 WEAK + 20 machine → WEAK first, cap 20; 5 WEAK + 20 machine → deferred lists machine shortIds only; 45/45 harness re-run PASS). 2. TU2 compact default schema (machine one-liners + WEAK packs, zero machine full packs). 3. TU3 verbose (adds machine packs, table always present). 4. TU4 bulk machine round-trip (reasonless keeps → ONE confirm → verbatim rationale per file, append-only, `readLatestVerdict` returns `keep`). 5. TU5 WEAK reason-mandatory (reasonless WEAK `finished` rejected zero-write; with reason per-item; mixed bulk-first). 6. TU6 rename round-trip (round-trips to `/resume`; duplicates coexist with path identity; `:name:"   "` rejected zero-write; confirm shows existing name; T1 trial-file round-trip re-confirmed). 7. TU7 deferred transparency (25 qualifying → 5 shortIds in page order; 27/27 listed, nothing dropped). 8. TU8 invariants (stale/ambiguous pre-confirm reject, trash rejected, reasonless-unknown rejected, live absent, non-TUI notify-only zero-write, race skip-warning zero overwrite, dry-run previews zero-write).
+
