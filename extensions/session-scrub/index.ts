@@ -815,6 +815,28 @@ interface TriageCandidate {
   entries: SessionEntry[];
 }
 
+interface MachineKeepBulk {
+  shortIds: string[];
+  rationale: string;
+}
+
+interface RenameAssignment {
+  idPrefix: string;
+  slug: string;
+}
+
+interface ResolvedRename {
+  assignment: RenameAssignment;
+  targetPath: string;
+  shortId: string;
+  existingName: string | undefined;
+}
+
+interface RejectedRename {
+  raw: string;
+  cause: string;
+}
+
 function isTriageVerdict(value: string): value is TriageVerdict {
   return (
     value === TRIAGE_VERDICT.KEEP ||
@@ -955,71 +977,164 @@ function unescapeReason(raw: string): string {
 }
 
 const ASSIGN_RE = /(\S+?):(keep|paused|finished|ephemeral|trash):"((?:[^"\\]|\\.)*)"/g;
+const RENAME_RE = /(\S+?):name:"((?:[^"\\]|\\.)*)"/g;
 const LOOSE_ASSIGN_RE = /(\S+?):([^:\s]+):/;
+
+/** Shared cleaning for triage input: flag tokens never become leftovers. */
+function cleanTriageArgs(args: string): string {
+  return args
+    .split(/\s+/)
+    .filter((t) => t !== "--apply" && t !== "--dry-run" && t !== "--verbose" && t.length > 0)
+    .join(" ");
+}
+
+/** Unified verdict + rename parse over one shared cursor (UX-05, design §6).
+ * Verdict triples and rename lines are disjoint grammars parsed alongside
+ * (never inside) each other in string order, so a rename token never surfaces
+ * as a verdict leftover and vice versa. One shared seen set rejects the
+ * second occurrence of any prefix as a duplicate assignment, whichever
+ * class it belongs to. */
+function parseTriageInput(args: string): {
+  verdict: { ok: ApplyAssignment[]; rejected: RejectedAssignment[] };
+  rename: { ok: RenameAssignment[]; rejected: RejectedRename[] };
+} {
+  const cleaned = cleanTriageArgs(args);
+  const verdictOk: ApplyAssignment[] = [];
+  const verdictRejected: RejectedAssignment[] = [];
+  const renameOk: RenameAssignment[] = [];
+  const renameRejected: RejectedRename[] = [];
+  const seen = new Set<string>();
+  type OrderedToken =
+    | { start: number; kind: "verdict"; raw: string; prefix: string; verdictRaw: string; reasonRaw: string }
+    | { start: number; kind: "rename"; raw: string; prefix: string; slugRaw: string };
+  const ordered: OrderedToken[] = [];
+  for (const m of cleaned.matchAll(ASSIGN_RE)) {
+    const start = m.index ?? 0;
+    ordered.push({
+      start,
+      kind: "verdict",
+      raw: m[0],
+      prefix: m[1] ?? "",
+      verdictRaw: m[2] ?? "",
+      reasonRaw: m[3] ?? "",
+    });
+  }
+  for (const m of cleaned.matchAll(RENAME_RE)) {
+    const start = m.index ?? 0;
+    ordered.push({
+      start,
+      kind: "rename",
+      raw: m[0],
+      prefix: m[1] ?? "",
+      slugRaw: m[2] ?? "",
+    });
+  }
+  ordered.sort((a, b) => a.start - b.start);
+  let cursor = 0;
+  const gaps: string[] = [];
+  for (const token of ordered) {
+    const end = token.start + token.raw.length;
+    if (token.start > cursor) gaps.push(cleaned.slice(cursor, token.start));
+    cursor = Math.max(cursor, end);
+    if (token.kind === "verdict") {
+      const reason = unescapeReason(token.reasonRaw);
+      if (token.prefix.length === 0) {
+        verdictRejected.push({ raw: token.raw, cause: "empty id prefix" });
+        continue;
+      }
+      if (token.verdictRaw === VERDICTS.trash) {
+        verdictRejected.push({ raw: token.raw, cause: "trash is never appliable from triage" });
+        continue;
+      }
+      if (!isTriageVerdict(token.verdictRaw)) {
+        verdictRejected.push({ raw: token.raw, cause: `unknown verdict "${token.verdictRaw}"` });
+        continue;
+      }
+      if (reason.trim().length === 0) {
+        verdictRejected.push({
+          raw: token.raw,
+          cause: 'missing judged rationale (id:verdict:"reason" required)',
+        });
+        continue;
+      }
+      if (seen.has(token.prefix)) {
+        verdictRejected.push({ raw: token.raw, cause: `duplicate assignment "${token.prefix}"` });
+        continue;
+      }
+      seen.add(token.prefix);
+      verdictOk.push({ idPrefix: token.prefix, verdict: token.verdictRaw, reason });
+    } else {
+      const slug = unescapeReason(token.slugRaw).replace(/[\r\n]+/g, " ").trim();
+      if (token.prefix.length === 0) {
+        renameRejected.push({ raw: token.raw, cause: "empty id prefix" });
+        continue;
+      }
+      if (slug.length === 0) {
+        renameRejected.push({ raw: token.raw, cause: "empty rename slug" });
+        continue;
+      }
+      if (seen.has(token.prefix)) {
+        renameRejected.push({ raw: token.raw, cause: `duplicate assignment "${token.prefix}"` });
+        continue;
+      }
+      seen.add(token.prefix);
+      renameOk.push({ idPrefix: token.prefix, slug });
+    }
+  }
+  if (cursor < cleaned.length) gaps.push(cleaned.slice(cursor));
+  // Leftover gaps split per token so several bare keeps parse (TU4).
+  for (const gap of gaps) {
+    for (const token of gap.split(/\s+/)) {
+      if (token.length === 0) continue;
+      const bare = /^(\S+?):(keep|paused|finished|ephemeral|trash)$/.exec(token);
+      if (bare !== null) {
+        const prefix = bare[1] ?? "";
+        const verdictRaw = bare[2] ?? "";
+        if (verdictRaw === VERDICTS.trash) {
+          verdictRejected.push({ raw: token, cause: "trash is never appliable from triage" });
+          continue;
+        }
+        if (verdictRaw !== TRIAGE_VERDICT.KEEP) {
+          verdictRejected.push({ raw: token, cause: 'missing judged rationale (id:verdict:"reason" required)' });
+          continue;
+        }
+        // Reasonless keep: provisional (empty reason = bulk default applies).
+        // The post-resolve provenance gate assigns the bulk rationale on
+        // MACHINE targets and rejects WEAK/unknown/ambiguous/stale targets.
+        if (seen.has(prefix)) {
+          verdictRejected.push({ raw: token, cause: `duplicate assignment "${prefix}"` });
+          continue;
+        }
+        seen.add(prefix);
+        verdictOk.push({ idPrefix: prefix, verdict: TRIAGE_VERDICT.KEEP, reason: "" });
+        continue;
+      }
+      const loose = LOOSE_ASSIGN_RE.exec(token);
+      if (loose !== null && !isTriageVerdict(loose[2] ?? "") && (loose[2] ?? "") !== VERDICTS.trash) {
+        verdictRejected.push({ raw: token, cause: `unknown verdict "${loose[2] ?? ""}"` });
+      } else {
+        verdictRejected.push({ raw: token, cause: 'malformed pair (expected id:verdict:"reason")' });
+      }
+    }
+  }
+  return {
+    verdict: { ok: verdictOk, rejected: verdictRejected },
+    rename: { ok: renameOk, rejected: renameRejected },
+  };
+}
 
 function parseApplyAssignments(args: string): {
   ok: ApplyAssignment[];
   rejected: RejectedAssignment[];
 } {
-  const cleaned = args
-    .split(/\s+/)
-    .filter((t) => t !== "--apply" && t !== "--dry-run" && t.length > 0)
-    .join(" ");
-  const ok: ApplyAssignment[] = [];
-  const rejected: RejectedAssignment[] = [];
-  const seen = new Set<string>();
-  let cursor = 0;
-  const leftovers: string[] = [];
-  for (const m of cleaned.matchAll(ASSIGN_RE)) {
-    const start = m.index ?? 0;
-    const gap = cleaned.slice(cursor, start).trim();
-    if (gap.length > 0) leftovers.push(gap);
-    cursor = start + m[0].length;
-    const prefix = m[1] ?? "";
-    const verdictRaw = m[2] ?? "";
-    const reason = unescapeReason(m[3] ?? "");
-    if (prefix.length === 0) {
-      rejected.push({ raw: m[0], cause: "empty id prefix" });
-      continue;
-    }
-    if (verdictRaw === VERDICTS.trash) {
-      rejected.push({ raw: m[0], cause: "trash is never appliable from triage" });
-      continue;
-    }
-    if (!isTriageVerdict(verdictRaw)) {
-      rejected.push({ raw: m[0], cause: `unknown verdict "${verdictRaw}"` });
-      continue;
-    }
-    if (reason.trim().length === 0) {
-      rejected.push({
-        raw: m[0],
-        cause: 'missing judged rationale (id:verdict:"reason" required)',
-      });
-      continue;
-    }
-    if (seen.has(prefix)) {
-      rejected.push({ raw: m[0], cause: `duplicate prefix "${prefix}"` });
-      continue;
-    }
-    seen.add(prefix);
-    ok.push({ idPrefix: prefix, verdict: verdictRaw, reason });
-  }
-  const tail = cleaned.slice(cursor).trim();
-  if (tail.length > 0) leftovers.push(tail);
-  for (const raw of leftovers) {
-    const bare = /^(\S+?):(keep|paused|finished|ephemeral|trash)$/.exec(raw);
-    if (bare !== null) {
-      rejected.push({ raw, cause: 'missing judged rationale (id:verdict:"reason" required)' });
-      continue;
-    }
-    const loose = LOOSE_ASSIGN_RE.exec(raw);
-    if (loose !== null && !isTriageVerdict(loose[2] ?? "") && (loose[2] ?? "") !== VERDICTS.trash) {
-      rejected.push({ raw, cause: `unknown verdict "${loose[2] ?? ""}"` });
-    } else {
-      rejected.push({ raw, cause: 'malformed pair (expected id:verdict:"reason")' });
-    }
-  }
-  return { ok, rejected };
+  return parseTriageInput(args).verdict;
+}
+
+function parseRenameAssignments(cleaned: string): {
+  ok: RenameAssignment[];
+  rejected: RejectedRename[];
+} {
+  return parseTriageInput(cleaned).rename;
 }
 
 async function appendVerdictToOther(
@@ -1047,6 +1162,26 @@ async function appendVerdictToOther(
   });
 }
 
+async function appendRenameToOther(
+  sessionPath: string,
+  slug: string,
+  livePath: string | undefined,
+): Promise<void> {
+  if (slug.trim().length === 0) {
+    throw new Error("refusing rename: empty slug");
+  }
+  // Defense in depth mirroring appendVerdictToOther: resolve ran before the
+  // human confirm, so re-assert liveness here — never write into a gone
+  // file or the live session. Append-only; never touches message content.
+  if (!existsSync(sessionPath)) {
+    throw new Error("refusing rename: session file is gone");
+  }
+  if (livePath !== undefined && samePath(sessionPath, livePath)) {
+    throw new Error("refusing rename: target is the live session");
+  }
+  SessionManager.open(sessionPath).appendSessionInfo(slug);
+}
+
 function escapeQuote(text: string): string {
   return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
@@ -1070,6 +1205,53 @@ function formatDigestPack(
   }
   lines.push("```");
   return lines.join("\n");
+}
+
+/** In-memory machine/WEAK partition over the already-gathered candidates.
+ * machine-keep ⟺ info.name non-blank (same named test as Slice-2); rest →
+ * weakQueue sorted by modified descending. No second list()/open() pass. */
+function partitionTriageCandidates(candidates: TriageCandidate[]): {
+  weakQueue: TriageCandidate[];
+  machineKeeps: TriageCandidate[];
+} {
+  const weakQueue: TriageCandidate[] = [];
+  const machineKeeps: TriageCandidate[] = [];
+  for (const c of candidates) {
+    if (c.info.name !== undefined && c.info.name.trim().length > 0) {
+      machineKeeps.push(c);
+    } else {
+      weakQueue.push(c);
+    }
+  }
+  weakQueue.sort((a, b) => b.info.modified.getTime() - a.info.modified.getTime());
+  return { weakQueue, machineKeeps };
+}
+
+/** Fixed dated default rationale for the machine-keep bulk confirm (UX-03),
+ * stored verbatim as reason per file. */
+function bulkKeepRationale(now: Date): string {
+  return `machine keep, bulk-confirmed ${now.toISOString().slice(0, 10)}`;
+}
+
+/** Compact one-liner per session (UX-02 schema). head is a prefix of the
+ * already-built pack head — no new extraction. */
+function formatCompactRow(args: {
+  shortId: string;
+  messageCount: number;
+  ageDays: number;
+  sessionName?: string;
+  weakGuess: string;
+  head: string;
+}): string {
+  const named =
+    args.sessionName !== undefined && args.sessionName.trim().length > 0
+      ? `named "${escapeQuote(args.sessionName)}"`
+      : "unnamed";
+  const headSlice = args.head.length > 120 ? `${args.head.slice(0, 120)}…` : args.head;
+  return (
+    `${args.shortId} · ${args.messageCount}msgs · ${args.ageDays}d · ` +
+    `${named} · ${args.weakGuess} · ${escapeQuote(headSlice)}`
+  );
 }
 
 async function gatherTriageCandidates(ctx: ExtensionCommandContext): Promise<{
@@ -1119,7 +1301,7 @@ function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
-async function handleScrubTriagePhase1(ctx: ExtensionCommandContext): Promise<void> {
+async function handleScrubTriagePhase1(ctx: ExtensionCommandContext, verbose: boolean): Promise<void> {
   const { candidates, emptySkipped, ephemeralSkipped } = await gatherTriageCandidates(ctx);
   if (candidates.length === 0) {
     ctx.ui.notify(
@@ -1128,10 +1310,15 @@ async function handleScrubTriagePhase1(ctx: ExtensionCommandContext): Promise<vo
     );
     return;
   }
-  const shown = candidates.slice(0, MAX_DIGEST_SESSIONS);
-  const deferred = candidates.length - shown.length;
-  const blocks = shown.map((c) => {
-    const pack = buildDigestPack(
+  const { weakQueue, machineKeeps } = partitionTriageCandidates(candidates);
+  const ordered = [...weakQueue, ...machineKeeps];
+  const page = ordered.slice(0, MAX_DIGEST_SESSIONS);
+  const deferred = ordered.slice(MAX_DIGEST_SESSIONS);
+  const machineSet = new Set(machineKeeps.map((c) => c.info.id));
+  const pageMachine = page.filter((c) => machineSet.has(c.info.id));
+  const pageWeak = page.filter((c) => !machineSet.has(c.info.id));
+  const packOf = (c: TriageCandidate): DigestPack =>
+    buildDigestPack(
       {
         shortId: shortId(c.info.id),
         messageCount: c.info.messageCount,
@@ -1143,45 +1330,118 @@ async function handleScrubTriagePhase1(ctx: ExtensionCommandContext): Promise<vo
       // Lazy text extraction: only shown packs pay for it.
       orderedMessageTexts(c.entries),
     );
-    const named = c.info.name !== undefined && c.info.name.trim().length > 0;
-    const machine: MachineFact | undefined = named
-      ? {
-          shortId: pack.shortId,
-          grade: TRIAGE_GRADE.MACHINE,
-          proposal: TRIAGE_VERDICT.KEEP,
-          rationale: "named session — presumed active",
-        }
-      : undefined;
-    const weak = suggestTriageWeak({
-      shortId: pack.shortId,
+  const guessOf = (c: TriageCandidate): WeakGuess =>
+    suggestTriageWeak({
+      shortId: shortId(c.info.id),
       messageCount: c.info.messageCount,
       ageMs: Date.now() - c.info.created.getTime(),
       maxAgeMs: MAX_AGE_MS,
     });
-    return formatDigestPack(pack, machine, weak);
+  const machineFactOf = (pack: DigestPack): MachineFact => ({
+    shortId: pack.shortId,
+    grade: TRIAGE_GRADE.MACHINE,
+    proposal: TRIAGE_VERDICT.KEEP,
+    rationale: "named session — presumed active",
   });
   const lines = [
     `triage: ${candidates.length} sessions need verdicts (${emptySkipped} empty skipped, ${ephemeralSkipped} ephemeral already candidates).`,
-    ...blocks,
   ];
-  if (deferred > 0) {
-    lines.push(`+${deferred} more deferred — triage these first, then re-run.`);
+  for (const c of pageWeak) {
+    lines.push(formatDigestPack(packOf(c), undefined, guessOf(c)));
   }
-  lines.push("Packs are quoted-as-data: judge the words, then approve in chat; nothing is written by this command.");
+  if (pageMachine.length > 0) {
+    lines.push(`— machine keeps (${pageMachine.length}) —`);
+    for (const c of pageMachine) {
+      const pack = packOf(c);
+      lines.push(
+        formatCompactRow({
+          shortId: pack.shortId,
+          messageCount: pack.messageCount,
+          ageDays: pack.ageDays,
+          sessionName: pack.sessionName,
+          weakGuess: guessOf(c).guess,
+          head: pack.head,
+        }),
+      );
+    }
+  }
+  if (verbose) {
+    for (const c of pageMachine) {
+      const pack = packOf(c);
+      lines.push(formatDigestPack(pack, machineFactOf(pack), guessOf(c)));
+    }
+  }
+  if (deferred.length > 0) {
+    lines.push(`deferred (${deferred.length}): ${deferred.map((c) => shortId(c.info.id)).join(", ")}`);
+  }
+  lines.push('Packs are quoted-as-data: judge the words, then approve in chat with /scrub-triage --apply id:verdict:"reason" [...] (machine keeps accept bare id:keep; renames as id:name:"slug"); --verbose shows full packs; --dry-run previews; nothing is written by this command.');
   ctx.ui.notify(lines.join("\n"), "info");
 }
 
 async function handleScrubTriagePhase2(
+  args: string,
   assignments: ApplyAssignment[],
   parseRejected: RejectedAssignment[],
+  renameAssignments: RenameAssignment[],
+  renameRejected: RejectedRename[],
   ctx: ExtensionCommandContext,
 ): Promise<void> {
   for (const r of parseRejected) {
     ctx.ui.notify(`Rejected ${r.raw}: ${r.cause}`, "warning");
   }
+  for (const r of renameRejected) {
+    ctx.ui.notify(`Rejected ${r.raw}: ${r.cause}`, "warning");
+  }
   const { candidates } = await gatherTriageCandidates(ctx);
+  const byPath = new Map<string, TriageCandidate>(candidates.map((c) => [c.info.path, c]));
+  const ageOf = (targetPath: string): { msgs: number; ageDays: number } => {
+    const info = byPath.get(targetPath);
+    if (info === undefined) return { msgs: 0, ageDays: 0 };
+    return {
+      msgs: info.info.messageCount,
+      ageDays: Math.floor((Date.now() - info.info.created.getTime()) / 86400000),
+    };
+  };
   const resolved: ResolvedAssignment[] = [];
+  const rejectReasonless = (prefix: string): void => {
+    ctx.ui.notify(`Rejected ${prefix}: reasonless keep is machine-only — WEAK needs id:keep:"reason"`, "warning");
+  };
   for (const a of assignments) {
+    const matches = candidates.filter((c) => c.info.id.startsWith(a.idPrefix));
+    // Post-resolve provenance gate for the reasonless machine-keep form:
+    // MACHINE targets inherit the bulk rationale; WEAK/unknown/ambiguous/
+    // stale targets are rejected here, before any confirm, zero writes.
+    if (matches.length === 0) {
+      if (a.reason === "") {
+        rejectReasonless(a.idPrefix);
+      } else {
+        ctx.ui.notify(`Rejected ${a.idPrefix}: unknown session (stale or out of triage set)`, "warning");
+      }
+      continue;
+    }
+    if (matches.length > 1) {
+      if (a.reason === "") {
+        rejectReasonless(a.idPrefix);
+      } else {
+        ctx.ui.notify(`Rejected ${a.idPrefix}: ambiguous prefix (${matches.length} sessions)`, "warning");
+      }
+      continue;
+    }
+    const target = matches[0] as TriageCandidate;
+    const named = target.info.name !== undefined && target.info.name.trim().length > 0;
+    if (a.reason === "" && !named) {
+      rejectReasonless(a.idPrefix);
+      continue;
+    }
+    resolved.push({
+      assignment: a,
+      targetPath: target.info.path,
+      shortId: shortId(target.info.id),
+      provenance: named ? TRIAGE_GRADE.MACHINE : TRIAGE_GRADE.WEAK,
+    });
+  }
+  const resolvedRenames: ResolvedRename[] = [];
+  for (const a of renameAssignments) {
     const matches = candidates.filter((c) => c.info.id.startsWith(a.idPrefix));
     if (matches.length === 0) {
       ctx.ui.notify(`Rejected ${a.idPrefix}: unknown session (stale or out of triage set)`, "warning");
@@ -1192,53 +1452,72 @@ async function handleScrubTriagePhase2(
       continue;
     }
     const target = matches[0] as TriageCandidate;
-    const named = target.info.name !== undefined && target.info.name.trim().length > 0;
-    resolved.push({
+    const existing = target.info.name?.trim();
+    resolvedRenames.push({
       assignment: a,
       targetPath: target.info.path,
       shortId: shortId(target.info.id),
-      provenance: named ? TRIAGE_GRADE.MACHINE : TRIAGE_GRADE.WEAK,
+      existingName: existing !== undefined && existing.length > 0 ? existing : undefined,
     });
   }
-  if (resolved.length === 0) {
-    ctx.ui.notify("Cancelled.", "info");
+  // Confirm-layer grouping only: machine keeps bulk-confirm, everything
+  // else (all WEAK rows, any judged non-keep on named sessions) per-item.
+  const bulkKeeps = resolved.filter(
+    (r) => r.provenance === TRIAGE_GRADE.MACHINE && r.assignment.verdict === TRIAGE_VERDICT.KEEP,
+  );
+  const bulkSet = new Set(bulkKeeps.map((r) => r.shortId));
+  const perItem = resolved.filter((r) => !bulkSet.has(r.shortId));
+  const bulkRationale = bulkKeepRationale(new Date());
+  const bulk: MachineKeepBulk | undefined =
+    bulkKeeps.length > 0
+      ? { shortIds: bulkKeeps.map((r) => r.shortId), rationale: bulkRationale }
+      : undefined;
+  const verbose = args.split(/\s+/).includes("--verbose");
+  if (resolveDryRun(args, ctx)) {
+    const lines = ["Dry-run — nothing written."];
+    if (bulk !== undefined) {
+      const fragments = verbose
+        ? ` · ${bulkKeeps.map((r) => {
+            const { msgs, ageDays } = ageOf(r.targetPath);
+            return `${r.shortId} (msgs=${msgs} age=${ageDays}d)`;
+          }).join(" · ")}`
+        : "";
+      lines.push(`would bulk-keep ${bulk.shortIds.length} machine sessions [${bulk.shortIds.join(", ")}] with reason "${bulk.rationale}"${fragments}`);
+    }
+    for (const r of perItem) {
+      const extra = verbose ? ` msgs=${ageOf(r.targetPath).msgs} age=${ageOf(r.targetPath).ageDays}d` : "";
+      lines.push(`would apply ${r.shortId} as ${r.assignment.verdict} (provenance=${r.provenance}${extra}): "${r.assignment.reason}"`);
+    }
+    for (const r of resolvedRenames) {
+      lines.push(`would rename ${r.shortId} from "${r.existingName ?? "(unnamed)"}" to "${r.assignment.slug}"`);
+    }
+    ctx.ui.notify(lines.join("\n"), "info");
     return;
   }
   const livePath = ctx.sessionManager.getSessionFile();
   let applied = 0;
   let already = 0;
+  let confirmedVerdicts = 0;
+  let confirmedRenames = 0;
   const declined: string[] = [];
   const conflicted: string[] = [];
   const errored: string[] = [];
-  for (const r of resolved) {
-    const info = candidates.find((c) => c.info.path === r.targetPath) as TriageCandidate | undefined;
-    const ageDays =
-      info === undefined
-        ? 0
-        : Math.floor((Date.now() - info.info.created.getTime()) / 86400000);
-    const ok = await ctx.ui.confirm(
-      `Triage ${r.shortId} as ${r.assignment.verdict}?`,
-      `provenance=${r.provenance} reason="${r.assignment.reason}"` +
-        (info === undefined ? "" : ` msgs=${info.info.messageCount} age=${ageDays}d`) +
-        ` (pack text not repeated — see phase-1 output)`,
-    );
-    if (!ok) {
-      declined.push(r.shortId);
-      continue;
-    }
+  // Identical per-file body under one confirm: pre-append recheck,
+  // try/catch append, post-write re-read, shared counters.
+  const disposeVerdict = async (r: ResolvedAssignment, reason: string): Promise<void> => {
     const current = readLatestVerdict(openSessionEntries(r.targetPath));
     if (current !== undefined && current !== r.assignment.verdict) {
       ctx.ui.notify(`Skipped ${r.shortId}: verdict appeared meanwhile (${current})`, "warning");
       conflicted.push(r.shortId);
-      continue;
+      return;
     }
     if (current !== undefined) {
       ctx.ui.notify(`Already ${r.shortId}: verdict ${current} present and matching - counted.`, "info");
       already += 1;
-      continue;
+      return;
     }
     try {
-      await appendVerdictToOther(r.targetPath, r.assignment.verdict, r.assignment.reason, livePath);
+      await appendVerdictToOther(r.targetPath, r.assignment.verdict, reason, livePath);
       const check = readLatestVerdict(openSessionEntries(r.targetPath));
       if (check === r.assignment.verdict) {
         applied += 1;
@@ -1250,34 +1529,100 @@ async function handleScrubTriagePhase2(
       ctx.ui.notify(`Skipped ${r.shortId}: ${errorMessage(err)}`, "warning");
       errored.push(r.shortId);
     }
+  };
+  if (bulk !== undefined) {
+    const fragments = bulkKeeps.map((r) => {
+      const { msgs, ageDays } = ageOf(r.targetPath);
+      const reason = r.assignment.reason === "" ? bulk.rationale : r.assignment.reason;
+      return `${r.shortId} (msgs=${msgs} age=${ageDays}d reason="${reason}")`;
+    });
+    const ok = await ctx.ui.confirm(
+      `Keep ${bulk.shortIds.length} machine sessions? (${bulk.shortIds.join(", ")})`,
+      `rationale="${bulk.rationale}" · ${fragments.join(" · ")} (pack text not repeated — see phase-1 output)`,
+    );
+    if (!ok) {
+      declined.push(...bulk.shortIds);
+    } else {
+      confirmedVerdicts += bulkKeeps.length;
+      for (const r of bulkKeeps) {
+        await disposeVerdict(r, r.assignment.reason === "" ? bulk.rationale : r.assignment.reason);
+      }
+    }
+  }
+  for (const r of perItem) {
+    const { msgs, ageDays } = ageOf(r.targetPath);
+    const ok = await ctx.ui.confirm(
+      `Triage ${r.shortId} as ${r.assignment.verdict}?`,
+      `provenance=${r.provenance} reason="${r.assignment.reason}" msgs=${msgs} age=${ageDays}d` +
+        ` (pack text not repeated — see phase-1 output)`,
+    );
+    if (!ok) {
+      declined.push(r.shortId);
+      continue;
+    }
+    confirmedVerdicts += 1;
+    await disposeVerdict(r, r.assignment.reason);
+  }
+  let renamed = 0;
+  const renameDeclined: string[] = [];
+  const renameErrored: string[] = [];
+  for (const r of resolvedRenames) {
+    const { msgs, ageDays } = ageOf(r.targetPath);
+    const ok = await ctx.ui.confirm(
+      `Rename ${r.shortId} to "${r.assignment.slug}"?`,
+      `existing="${r.existingName ?? "(unnamed)"}" → proposed="${r.assignment.slug}" · msgs=${msgs} · age=${ageDays}d`,
+    );
+    if (!ok) {
+      renameDeclined.push(r.shortId);
+      continue;
+    }
+    confirmedRenames += 1;
+    try {
+      await appendRenameToOther(r.targetPath, r.assignment.slug, livePath);
+      const check = SessionManager.open(r.targetPath).getSessionName();
+      if (check === r.assignment.slug) {
+        renamed += 1;
+      } else {
+        ctx.ui.notify(`Skipped ${r.shortId}: post-write re-read mismatch`, "warning");
+        renameErrored.push(r.shortId);
+      }
+    } catch (err) {
+      ctx.ui.notify(`Skipped ${r.shortId}: ${errorMessage(err)}`, "warning");
+      renameErrored.push(r.shortId);
+    }
+  }
+  if (confirmedVerdicts === 0 && confirmedRenames === 0) {
+    ctx.ui.notify("Cancelled.", "info");
+    return;
   }
   const triaged = applied + already;
   const parts = [`Triaged ${triaged} of ${resolved.length} (${applied} applied + ${already} already)`];
   if (declined.length > 0) parts.push(`${declined.length} declined [${declined.join(", ")}]`);
   if (conflicted.length > 0) parts.push(`${conflicted.length} conflict [${conflicted.join(", ")}]`);
   if (errored.length > 0) parts.push(`${errored.length} error [${errored.join(", ")}]`);
+  if (resolvedRenames.length > 0) {
+    parts.push(`renamed ${renamed} of ${resolvedRenames.length} (${renameDeclined.length} declined, ${renameErrored.length} error)`);
+  }
   parts.push("Re-run /scrub to see new classifications.");
   ctx.ui.notify(parts.join("; ") + ".", "info");
 }
 
 async function handleScrubTriage(args: string, ctx: ExtensionCommandContext): Promise<void> {
   if (!args.includes("--apply")) {
-    await handleScrubTriagePhase1(ctx);
+    const verbose = args.split(/\s+/).includes("--verbose");
+    await handleScrubTriagePhase1(ctx, verbose);
     return;
   }
-  const parsed = parseApplyAssignments(args);
-  if (resolveDryRun(args, ctx)) {
-    const lines = ["Dry-run — nothing written."];
-    for (const a of parsed.ok) {
-      lines.push(`would apply ${a.idPrefix} as ${a.verdict}: "${a.reason}"`);
-    }
-    for (const r of parsed.rejected) {
-      lines.push(`rejected ${r.raw}: ${r.cause}`);
-    }
-    ctx.ui.notify(lines.join("\n"), "info");
-    return;
-  }
-  await handleScrubTriagePhase2(parsed.ok, parsed.rejected, ctx);
+  const verdictParsed = parseApplyAssignments(args);
+  const renameParsed = parseRenameAssignments(cleanTriageArgs(args));
+  await handleScrubTriagePhase2(
+    args,
+    verdictParsed.ok,
+    verdictParsed.rejected,
+    renameParsed.ok,
+    renameParsed.rejected,
+    ctx,
+  );
 }
 
 // ---------------------------------------------------------------------------
