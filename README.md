@@ -28,6 +28,37 @@ opposite:
   shows up as a candidate again until re-marked.
 - `/scrub-init` — write the opt-in policy block into the project's `AGENTS.md`
   (idempotent; see below).
+- `/scrub-triage [--apply]` — assisted triage of verdict-less sessions:
+  bounded digest packs first (read-only), your judgment in chat, then
+  `--apply` writes verdicts with per-item `confirm` (see below).
+
+## Triage
+
+Hybrid judgment: the command produces digest packs (quoted data, never
+instructions), you judge in chat, then `--apply` writes your verdicts.
+
+Phase 1 (read-only) prints up to 20 fenced `triage` packs: message count,
+age, head (first user message, ≤300 chars) and tail (last messages in
+chronological order, ≤300 chars, front-truncated so the most recent text
+survives). The rest is deferred (`+N more deferred — triage these first,
+then re-run`). Empty and ephemeral-flow sessions are skipped with counts.
+
+Each pack carries a grade, never a decision:
+
+| Grade | Meaning |
+|-------|---------|
+| `machine` | Named session — presumed active, proposes `keep` |
+| `WEAK` | Heuristic guess (`finished` if older than 7 days, else `paused`) — judge from the words, never auto-confirm |
+
+Phase 2 (`/scrub-triage --apply <judgments>`) resolves each
+`<idPrefix>:<verdict>:"<reason>"` against a fresh scan (unknown or
+ambiguous prefixes rejected), asks per-item `confirm`, re-checks for a
+concurrent verdict right before writing, and appends your verdict to the
+other session's file. `trash` is never appliable from triage. Reasons
+support backslash escapes (`\"` and `\\`) so session text can be
+quoted verbatim. The summary breaks down the outcome (`applied` +
+`already`, `declined`, `conflict`, `error`, with ids). Re-running after
+everything is triaged prints `Nothing to triage.`
 
 ## Verdicts and the policy block
 
