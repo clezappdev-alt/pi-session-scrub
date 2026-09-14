@@ -6,3 +6,5 @@ scratch/
 *.local.md
 # Local Pi runtime state
 .atl/
+.pi/
+.codegraph/
