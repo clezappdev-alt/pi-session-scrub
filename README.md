@@ -37,11 +37,15 @@ opposite:
 Hybrid judgment: the command produces digest packs (quoted data, never
 instructions), you judge in chat, then `--apply` writes your verdicts.
 
-Phase 1 (read-only) prints up to 20 fenced `triage` packs: message count,
-age, head (first user message, ≤300 chars) and tail (last messages in
-chronological order, ≤300 chars, front-truncated so the most recent text
-survives). The rest is deferred (`+N more deferred — triage these first,
-then re-run`). Empty and ephemeral-flow sessions are skipped with counts.
+Phase 1 (read-only) prints a compact table by default (one line per session:
+id, message count, age, name, grade → proposal), WEAK packs in full, and
+up to 20 slots ordered WEAK-first with machine-keeps filling the rest.
+`--verbose` prints full fenced `triage` packs for every slot (head = first
+user message ≤300 chars; tail = last messages in chronological order
+≤300 chars, front-truncated so the most recent text survives). Deferred
+candidates are listed by shortId (`+N deferred: <ids> — triage these
+first, then re-run`). Empty and ephemeral-flow sessions are skipped with
+counts.
 
 Each pack carries a grade, never a decision:
 
@@ -52,13 +56,21 @@ Each pack carries a grade, never a decision:
 
 Phase 2 (`/scrub-triage --apply <judgments>`) resolves each
 `<idPrefix>:<verdict>:"<reason>"` against a fresh scan (unknown or
-ambiguous prefixes rejected), asks per-item `confirm`, re-checks for a
-concurrent verdict right before writing, and appends your verdict to the
-other session's file. `trash` is never appliable from triage. Reasons
-support backslash escapes (`\"` and `\\`) so session text can be
-quoted verbatim. The summary breaks down the outcome (`applied` +
-`already`, `declined`, `conflict`, `error`, with ids). Re-running after
-everything is triaged prints `Nothing to triage.`
+ambiguous prefixes rejected). WEAK verdicts ask per-item `confirm`;
+machine-keeps can be confirmed in bulk with ONE confirm storing a fixed
+dated rationale (`machine keep, bulk-confirmed <YYYY-MM-DD>`) in every
+file. Reasonless `id:keep` is accepted only for machine-keeps (resolved
+provenance); `finished`/`paused`/judged verdicts still require a reason.
+Renames are own-line assignments (`<idPrefix>:name:"<slug>"`, trim +
+non-empty, duplicates allowed like `/name`) with per-item confirms showing
+existing → proposed, written via the same append-only entry `/name` uses
+so `/resume` reflects them with zero friction. Every write re-checks for
+a concurrent verdict right before appending. `trash` is never appliable
+from triage. Reasons support backslash escapes (`\"` and `\\`) so
+session text can be quoted verbatim. The summary breaks down the outcome
+(`applied` + `already`, `declined`, `conflict`, `error`, renames
+applied/declined/errored, with ids). Re-running after everything is
+triaged prints `Nothing to triage.`
 
 ## Verdicts and the policy block
 
