@@ -812,8 +812,7 @@ interface RejectedAssignment {
 
 interface TriageCandidate {
   info: SessionInfo;
-  userMessages: string[];
-  assistantMessages: string[];
+  entries: SessionEntry[];
 }
 
 function isTriageVerdict(value: string): value is TriageVerdict {
@@ -828,7 +827,10 @@ function isTriageVerdict(value: string): value is TriageVerdict {
 function stripForQuote(text: string): string {
   return text
     .replace(/\[[0-9;]*m/g, "")
-    .replace(/[̀-ͯ]/g, "");
+    .replace(/[̀-ͯ]/g, "")
+    // Zero-width invisibles (ZWSP/ZWNJ/ZWJ/BOM): strip so quoted
+    // packs never carry invisible chars into pasted verdict lines.
+        .replace(/[\u200B-\u200D\uFEFF]/g, "");
 }
 
 function truncateWithEllipsis(text: string, max: number): { text: string; truncated: boolean } {
@@ -836,22 +838,33 @@ function truncateWithEllipsis(text: string, max: number): { text: string; trunca
   return { text: `${text.slice(0, max)}…`, truncated: true };
 }
 
-function assistantTexts(entries: unknown): string[] {
-  if (!Array.isArray(entries)) return [];
-  const out: string[] = [];
+function truncateTailFromFront(text: string, max: number): { text: string; truncated: boolean } {
+  if (text.length <= max) return { text, truncated: false };
+  return { text: `…${text.slice(-(max - 1))}`, truncated: true };
+}
+
+interface OrderedMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+/**
+ * User+assistant message texts in chronological (file) order.
+ * Empty texts are skipped, mirroring userTexts.
+ */
+function orderedMessageTexts(entries: SessionEntry[]): OrderedMessage[] {
+  const out: OrderedMessage[] = [];
   for (const e of entries) {
-    if (typeof e !== "object" || e === null) continue;
-    const entry = e as { type?: unknown };
-    if (entry.type !== "message") continue;
-    const msg = (e as { message?: unknown }).message;
+    if (e.type !== "message") continue;
+    const msg = (e as unknown as { message?: unknown }).message;
     if (typeof msg !== "object" || msg === null) continue;
     const m = msg as { role?: unknown; content?: unknown };
-    if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+    if ((m.role !== "user" && m.role !== "assistant") || !Array.isArray(m.content)) continue;
     const text = m.content
       .filter(isTextPart)
       .map((part) => part.text)
       .join(" ");
-    if (text.length > 0) out.push(text);
+    if (text.length > 0) out.push({ role: m.role as "user" | "assistant", text });
   }
   return out;
 }
@@ -865,15 +878,31 @@ function buildDigestPack(
     sessionName?: string;
     flowName?: string;
   },
-  userMessages: string[],
-  assistantMessages: string[],
+  ordered: OrderedMessage[],
 ): DigestPack {
-  const headRaw = stripForQuote(userMessages[0] ?? "");
+  const headRaw = stripForQuote(ordered.find((m) => m.role === "user")?.text ?? "");
+  // Same voices as before (last 3 assistant + last 2 user) but merged in
+  // true chronological order instead of assistant-first.
+  const lastAssistant = new Set(
+    ordered
+      .map((m, i) => (m.role === "assistant" ? i : -1))
+      .filter((i) => i >= 0)
+      .slice(-3),
+  );
+  const lastUser = new Set(
+    ordered
+      .map((m, i) => (m.role === "user" ? i : -1))
+      .filter((i) => i >= 0)
+      .slice(-2),
+  );
   const tailRaw = stripForQuote(
-    [...assistantMessages.slice(-3), ...userMessages.slice(-2)].join("\n---\n"),
+    ordered
+      .filter((_, i) => lastAssistant.has(i) || lastUser.has(i))
+      .map((m) => m.text)
+      .join("\n---\n"),
   );
   const head = truncateWithEllipsis(headRaw, HEAD_DIGEST_CHARS);
-  const tail = truncateWithEllipsis(tailRaw, TAIL_DIGEST_CHARS);
+  const tail = truncateTailFromFront(tailRaw, TAIL_DIGEST_CHARS);
   return {
     shortId: args.shortId,
     messageCount: args.messageCount,
@@ -919,7 +948,13 @@ function matchedEphemeralFlow(text: string, flows: string[]): string | undefined
   });
 }
 
-const ASSIGN_RE = /(\S+?):(keep|paused|finished|ephemeral|trash):"([^"]*)"/g;
+// Reason supports backslash escapes (\" and \\) so quoted session text can be
+// cited verbatim; symmetric with escapeQuote on the render side.
+function unescapeReason(raw: string): string {
+  return raw.replace(/\\(.)/g, "$1");
+}
+
+const ASSIGN_RE = /(\S+?):(keep|paused|finished|ephemeral|trash):"((?:[^"\\]|\\.)*)"/g;
 const LOOSE_ASSIGN_RE = /(\S+?):([^:\s]+):/;
 
 function parseApplyAssignments(args: string): {
@@ -942,7 +977,7 @@ function parseApplyAssignments(args: string): {
     cursor = start + m[0].length;
     const prefix = m[1] ?? "";
     const verdictRaw = m[2] ?? "";
-    const reason = m[3] ?? "";
+    const reason = unescapeReason(m[3] ?? "");
     if (prefix.length === 0) {
       rejected.push({ raw: m[0], cause: "empty id prefix" });
       continue;
@@ -991,9 +1026,18 @@ async function appendVerdictToOther(
   sessionPath: string,
   verdict: TriageVerdict,
   reason: string,
+  livePath: string | undefined,
 ): Promise<void> {
   if ((verdict as string) === (VERDICTS.trash as string)) {
     throw new Error("refusing trash verdict from triage");
+  }
+  // Defense in depth: resolve ran before the human confirm, so re-assert
+  // liveness here — never write into a gone file or the live session.
+  if (!existsSync(sessionPath)) {
+    throw new Error("refusing verdict: session file is gone");
+  }
+  if (livePath !== undefined && samePath(sessionPath, livePath)) {
+    throw new Error("refusing verdict: target is the live session");
   }
   SessionManager.open(sessionPath).appendCustomEntry(VERDICT_CUSTOM_TYPE, {
     version: 1,
@@ -1058,17 +1102,15 @@ async function gatherTriageCandidates(ctx: ExtensionCommandContext): Promise<{
       ephemeralSkipped += 1;
       continue;
     }
-    candidates.push({
-      info,
-      userMessages,
-      assistantMessages: assistantTexts(entries),
-    });
+    // Texts are extracted lazily per shown pack (orderedMessageTexts);
+    // classification here only needs entries + user text for ephemeral.
+    candidates.push({ info, entries });
   }
   candidates.sort((a, b) => {
     const aNamed = a.info.name !== undefined && a.info.name.trim().length > 0 ? 0 : 1;
     const bNamed = b.info.name !== undefined && b.info.name.trim().length > 0 ? 0 : 1;
     if (aNamed !== bNamed) return aNamed - bNamed;
-    return a.info.created.getTime() - b.info.created.getTime();
+    return a.info.modified.getTime() - b.info.modified.getTime();
   });
   return { candidates, emptySkipped, ephemeralSkipped };
 }
@@ -1098,8 +1140,8 @@ async function handleScrubTriagePhase1(ctx: ExtensionCommandContext): Promise<vo
         sessionName: c.info.name,
         flowName: undefined,
       },
-      c.userMessages,
-      c.assistantMessages,
+      // Lazy text extraction: only shown packs pay for it.
+      orderedMessageTexts(c.entries),
     );
     const named = c.info.name !== undefined && c.info.name.trim().length > 0;
     const machine: MachineFact | undefined = named
@@ -1162,7 +1204,12 @@ async function handleScrubTriagePhase2(
     ctx.ui.notify("Cancelled.", "info");
     return;
   }
-  let triaged = 0;
+  const livePath = ctx.sessionManager.getSessionFile();
+  let applied = 0;
+  let already = 0;
+  const declined: string[] = [];
+  const conflicted: string[] = [];
+  const errored: string[] = [];
   for (const r of resolved) {
     const info = candidates.find((c) => c.info.path === r.targetPath) as TriageCandidate | undefined;
     const ageDays =
@@ -1175,28 +1222,42 @@ async function handleScrubTriagePhase2(
         (info === undefined ? "" : ` msgs=${info.info.messageCount} age=${ageDays}d`) +
         ` (pack text not repeated — see phase-1 output)`,
     );
-    if (!ok) continue;
+    if (!ok) {
+      declined.push(r.shortId);
+      continue;
+    }
     const current = readLatestVerdict(openSessionEntries(r.targetPath));
-    if (current !== undefined) {
+    if (current !== undefined && current !== r.assignment.verdict) {
       ctx.ui.notify(`Skipped ${r.shortId}: verdict appeared meanwhile (${current})`, "warning");
+      conflicted.push(r.shortId);
+      continue;
+    }
+    if (current !== undefined) {
+      ctx.ui.notify(`Already ${r.shortId}: verdict ${current} present and matching - counted.`, "info");
+      already += 1;
       continue;
     }
     try {
-      await appendVerdictToOther(r.targetPath, r.assignment.verdict, r.assignment.reason);
+      await appendVerdictToOther(r.targetPath, r.assignment.verdict, r.assignment.reason, livePath);
       const check = readLatestVerdict(openSessionEntries(r.targetPath));
       if (check === r.assignment.verdict) {
-        triaged += 1;
+        applied += 1;
       } else {
         ctx.ui.notify(`Skipped ${r.shortId}: post-write re-read mismatch`, "warning");
+        errored.push(r.shortId);
       }
     } catch (err) {
       ctx.ui.notify(`Skipped ${r.shortId}: ${errorMessage(err)}`, "warning");
+      errored.push(r.shortId);
     }
   }
-  ctx.ui.notify(
-    `Triaged ${triaged} of ${resolved.length} sessions. Re-run /scrub to see new classifications.`,
-    "info",
-  );
+  const triaged = applied + already;
+  const parts = [`Triaged ${triaged} of ${resolved.length} (${applied} applied + ${already} already)`];
+  if (declined.length > 0) parts.push(`${declined.length} declined [${declined.join(", ")}]`);
+  if (conflicted.length > 0) parts.push(`${conflicted.length} conflict [${conflicted.join(", ")}]`);
+  if (errored.length > 0) parts.push(`${errored.length} error [${errored.join(", ")}]`);
+  parts.push("Re-run /scrub to see new classifications.");
+  ctx.ui.notify(parts.join("; ") + ".", "info");
 }
 
 async function handleScrubTriage(args: string, ctx: ExtensionCommandContext): Promise<void> {
