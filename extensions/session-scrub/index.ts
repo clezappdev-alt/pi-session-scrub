@@ -36,6 +36,12 @@ import {
   samePath,
 } from "./classify.ts";
 import { STATE, formatName, parseName, resolveVerdict, type State } from "./name.ts";
+import {
+  extractMemoryRef,
+  extractMemoryId,
+  buildHandoffMessage,
+  type MemoryRef,
+} from "./handoff.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -589,6 +595,115 @@ function handleScrubClose(
     return toolResult(`Could not set the session name: ${errorMessage(err)}`);
   }
   return toolResult(`Session name set: ${name}`);
+}
+
+const HANDOFF_CUSTOM_TYPE = "session-scrub/handoff";
+
+/**
+ * Memory observation for the traspaso.
+ *
+ * The plugin never calls Engram — separate packages, no API between them. It observes:
+ * `tool_call` gives toolName and input, `tool_result` gives the created id. The rule is
+ * blunt on purpose: the last memory WRITTEN before a traspaso is the traspaso.
+ *
+ * Module-level because it is per-process state about the session being worked on, and a
+ * tool_result can arrive after any number of intervening turns.
+ */
+let lastMemoryRef: MemoryRef | undefined;
+let pendingMemoryCallId: string | undefined;
+
+function observeToolCall(event: {
+  toolName: string;
+  toolCallId: string;
+  input: unknown;
+}): void {
+  const ref = extractMemoryRef(event.toolName, event.input);
+  if (ref === undefined) return;
+  lastMemoryRef = ref;
+  pendingMemoryCallId = event.toolCallId;
+}
+
+function observeToolResult(event: {
+  toolCallId: string;
+  structuredContent?: unknown;
+}): void {
+  if (event.toolCallId !== pendingMemoryCallId || lastMemoryRef === undefined) return;
+  const id = extractMemoryId(event.structuredContent);
+  if (id !== undefined) lastMemoryRef = { ...lastMemoryRef, id };
+}
+
+/**
+ * `/scrub-handoff` — create the continuation this session promised, and start it with
+ * the origin, the next step and the memory key.
+ *
+ * A command rather than a tool, and not by preference: `ctx.newSession` exists only on
+ * ExtensionCommandContext. A tool receives ExtensionToolContext, which cannot create a
+ * session. That is the right shape anyway — creating a session is deliberate and visible,
+ * so a human should type it rather than have it fire mid-turn.
+ */
+async function handleScrubHandoff(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  const originId = ctx.sessionManager.getSessionId();
+  const originName = ctx.sessionManager.getSessionName() ?? "";
+  const parsed = parseName(originName);
+  const fromArgs = args.trim();
+  const next = fromArgs.length > 0 ? fromArgs : parsed.text;
+  if (next.length === 0) {
+    ctx.ui.notify(
+      "scrub-handoff: this session names no next step to carry. Name it first with /name " +
+        "using a state prefix, or pass the next step as an argument.",
+      "warning",
+    );
+    return;
+  }
+  const state: State = parsed.state ?? STATE.traspaso;
+  const destinationName = formatName(state, next);
+  const memory = lastMemoryRef;
+  const message = buildHandoffMessage({
+    sessionId: originId,
+    name: originName,
+    next,
+    memory,
+  });
+
+  const result = await ctx.newSession({
+    parentSession: originId,
+    setup: async (sessionManager) => {
+      // custom_message with display:false reaches the model (sessionEntryToContextMessages
+      // includes custom_message) while rendering nothing in the transcript. A plain custom
+      // entry would be invisible to the agent; a normal message would be visible to the
+      // human and would remain a visible turn forever.
+      // CustomMessage shape (role:"custom"), not the CustomMessageEntryDraft shape
+      // (type:"custom_message") — appendMessage takes the former.
+      sessionManager.appendMessage({
+        role: "custom",
+        customType: HANDOFF_CUSTOM_TYPE,
+        content: message,
+        display: false,
+        timestamp: Date.now(),
+        details: {
+          originSessionId: originId,
+          originName,
+          memoryTopicKey: memory?.topicKey ?? null,
+          memoryId: memory?.id ?? null,
+        },
+      });
+      sessionManager.appendSessionInfo(destinationName);
+    },
+    withSession: async (fresh) => {
+      fresh.ui.notify(
+        memory?.topicKey !== undefined
+          ? `Handoff: ${destinationName} — contexto en memoria ${memory.topicKey}`
+          : `Handoff: ${destinationName} — sin memoria previa en esta sesión`,
+        "info",
+      );
+    },
+  });
+
+  if (result.cancelled) {
+    // The old ctx is stale after a session switch, but a cancel leaves us in the
+    // original session, so notifying here is safe.
+    ctx.ui.notify("scrub-handoff: cancelled, no new session was created.", "warning");
+  }
 }
 
 /** Sessions already offered the hint in this process (gate file may not exist yet). */
@@ -1581,6 +1696,13 @@ export default function (pi: ExtensionAPI): void {
       return handleScrubMark(params, ctx);
     },
   });
+  pi.registerCommand("scrub-handoff", {
+    description:
+      "Create the continuation this session promised: a new session, named and seeded with this session, the next step, and the key of the last memory written here. Use after naming this session with a 'traspaso:' state.",
+    handler: async (args, ctx) => {
+      await handleScrubHandoff(args, ctx);
+    },
+  });
   pi.registerTool({
     name: "scrub_close",
     label: "Close this work block",
@@ -1597,6 +1719,12 @@ export default function (pi: ExtensionAPI): void {
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       return handleScrubClose(pi, params);
     },
+  });
+  pi.on("tool_call", async (event) => {
+    observeToolCall(event);
+  });
+  pi.on("tool_result", async (event) => {
+    observeToolResult(event);
   });
   pi.on("agent_start", async (_event, ctx) => {
     await handleAgentStart(ctx);

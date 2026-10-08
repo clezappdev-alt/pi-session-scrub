@@ -1,0 +1,176 @@
+// Tests for the handoff payload (continuity slice C).
+//
+// The traspaso is executable: `ctx.newSession({ setup })` creates the destination and
+// `setup` receives a mutable SessionManager, so the destination can be seeded and named
+// at creation. This module holds the two pure pieces — recognising a memory write, and
+// composing the message the new session starts with.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  extractMemoryRef,
+  extractMemoryId,
+  buildHandoffMessage,
+  MEMORY_WRITE_TOOLS,
+} from "./handoff.ts";
+
+const ORIGIN = {
+  sessionId: "01a10e25-aaaa-7bbb-8ccc-ddddeeeeffff",
+  name: "traspaso: naming continuity — falta el traspaso",
+  next: "implementar el traspaso con newSession",
+};
+
+// ---------------------------------------------------------------------------
+// extractMemoryRef — only writes count
+// ---------------------------------------------------------------------------
+
+test("mem_save is recognised and yields its topic key and title", () => {
+  const ref = extractMemoryRef("mem_save", {
+    title: "Continuidad: slice A y B listos",
+    topic_key: "session-scrub:continuity-slice-ab",
+  });
+  assert.ok(ref);
+  assert.equal(ref.topicKey, "session-scrub:continuity-slice-slice-ab".replace("slice-slice", "slice"));
+  assert.equal(ref.title, "Continuidad: slice A y B listos");
+});
+
+test("mem_save without a topic key still yields a reference", () => {
+  const ref = extractMemoryRef("mem_save", { title: "sin topic key" });
+  assert.ok(ref);
+  assert.equal(ref.topicKey, undefined);
+  assert.equal(ref.title, "sin topic key");
+});
+
+test("mem_session_summary is a write and yields a reference", () => {
+  // The close protocol asks for mem_session_summary, so the last memory before a
+  // traspaso is often this one rather than a mem_save.
+  const ref = extractMemoryRef("mem_session_summary", {
+    content: "Goal: implementar el traspaso\nNext: newSession",
+  });
+  assert.ok(ref);
+  assert.equal(ref.title, "Goal: implementar el traspaso");
+});
+
+test("memory reads are not writes and do not count", () => {
+  // The rule is "the last memory WRITTEN before a traspaso". A session that only
+  // read memory never wrote one, so its last read is not a handoff record.
+  for (const tool of ["mem_search", "mem_get_observation", "mem_update", "mem_pin"]) {
+    assert.equal(
+      extractMemoryRef(tool, { id: 1, query: "x" }),
+      undefined,
+      `${tool} is a read, not a write`,
+    );
+  }
+});
+
+test("non-memory tools never yield a reference", () => {
+  for (const tool of ["bash", "read", "edit", "scrub_close", "web_search"]) {
+    assert.equal(extractMemoryRef(tool, { title: "looks like a memory" }), undefined);
+  }
+});
+
+test("a malformed or empty memory write is skipped rather than throwing", () => {
+  assert.equal(extractMemoryRef("mem_save", undefined), undefined);
+  assert.equal(extractMemoryRef("mem_save", null), undefined);
+  assert.equal(extractMemoryRef("mem_save", {}), undefined);
+  assert.equal(extractMemoryRef("mem_save", { title: "" }), undefined);
+  assert.equal(extractMemoryRef("mem_save", { title: 42 }), undefined);
+  assert.equal(extractMemoryRef("mem_save", "a string"), undefined);
+  assert.equal(extractMemoryRef(undefined as unknown as string, {}), undefined);
+});
+
+test("the id from the tool result is attached, and is optional", () => {
+  // The id only exists in the result, never in the call arguments.
+  const ref = extractMemoryRef("mem_save", { title: "t" });
+  assert.ok(ref);
+  assert.equal(ref.id, undefined);
+});
+
+test("the write-tool list is explicit, so a new mem_* read cannot silently count", () => {
+  assert.deepEqual([...MEMORY_WRITE_TOOLS].sort(), [
+    "mem_save",
+    "mem_session_summary",
+  ]);
+});
+
+// ---------------------------------------------------------------------------
+// extractMemoryId — the id only exists in the result
+// ---------------------------------------------------------------------------
+
+test("the id is found at the top level of the result", () => {
+  assert.equal(extractMemoryId({ id: 1591, sync_id: "obs-abc" }), 1591);
+});
+
+test("the id is found inside an observations list", () => {
+  assert.equal(extractMemoryId({ observations: [{ id: 1589, title: "x" }] }), 1589);
+});
+
+test("the id is found inside a candidates list", () => {
+  assert.equal(extractMemoryId({ candidates: [{ id: 42, judgement_id: "j" }] }), 42);
+});
+
+test("a result without a usable id yields undefined rather than throwing", () => {
+  for (const value of [undefined, null, {}, "text", 42, []]) {
+    assert.equal(extractMemoryId(value), undefined, `input ${JSON.stringify(value)}`);
+  }
+});
+
+test("a non-numeric id is rejected", () => {
+  assert.equal(extractMemoryId({ id: "obs-abc" }), undefined);
+  assert.equal(extractMemoryId({ observations: [{ id: null }] }), undefined);
+  assert.equal(extractMemoryId({ observations: [] }), undefined);
+});
+
+test("a non-finite id is rejected", () => {
+  // A NaN would render as "id NaN" in the handoff message, which the agent would read
+  // as a real pointer.
+  assert.equal(extractMemoryId({ id: Number.NaN }), undefined);
+  assert.equal(extractMemoryId({ id: Number.POSITIVE_INFINITY }), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// buildHandoffMessage — what the destination session starts with
+// ---------------------------------------------------------------------------
+
+test("the message names the origin so the new session knows where it came from", () => {
+  const message = buildHandoffMessage({ ...ORIGIN, memory: undefined });
+  assert.ok(message.includes("01a10e25"), "origin id must be present");
+  assert.ok(message.includes(ORIGIN.next), "next step must be present");
+});
+
+test("the message carries the memory key so the agent can retrieve it", () => {
+  const message = buildHandoffMessage({
+    ...ORIGIN,
+    memory: { topicKey: "session-scrub:continuity-slice-ab", title: "t", id: 1591 },
+  });
+  assert.ok(message.includes("session-scrub:continuity-slice-ab"));
+  assert.ok(message.includes("1591"));
+});
+
+test("the message still reads when there is no memory", () => {
+  const message = buildHandoffMessage({ ...ORIGIN, memory: undefined });
+  assert.equal(typeof message, "string");
+  assert.ok(message.length > 0);
+  assert.ok(!message.includes("undefined"), "must not leak undefined into the context");
+});
+
+test("the message stays short enough to cost almost nothing per turn", () => {
+  const message = buildHandoffMessage({
+    ...ORIGIN,
+    memory: {
+      topicKey: "session-scrub:continuity-slice-ab",
+      title: "Continuidad: slice A y B listos",
+      id: 1591,
+    },
+  });
+  assert.ok(
+    message.length <= 600,
+    `handoff message is context that stays in every later turn, got ${message.length} chars`,
+  );
+});
+
+test("the message does not claim a memory it does not have", () => {
+  const message = buildHandoffMessage({ ...ORIGIN, memory: undefined });
+  assert.ok(!/memoria/i.test(message), "must not mention memory when none was written");
+});
