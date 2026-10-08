@@ -50,7 +50,9 @@ cat >"$CFG" <<EOF
   "files": [
     "$REPO/extensions/session-scrub/index.ts",
     "$REPO/extensions/session-scrub/classify.ts",
-    "$REPO/extensions/session-scrub/classify.test.ts"
+    "$REPO/extensions/session-scrub/classify.test.ts",
+    "$REPO/extensions/session-scrub/name.ts",
+    "$REPO/extensions/session-scrub/name.test.ts"
   ]
 }
 EOF
