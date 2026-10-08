@@ -215,19 +215,20 @@ export function findLastMemoryWrite(entries: readonly unknown[]): MemoryRef | un
  * says where to find it.
  *
  * Pure, so the wording is testable and the message is deterministic.
+ *
+ * The observation id is deliberately absent. Tool *results* are not persisted in the
+ * session file — only the calls are — so the id exists solely in the in-memory event and
+ * cannot survive a reload. The `topic_key` travels in the call arguments and is durable,
+ * and `mem_search` resolves it, so the id was never needed. The first handoff tried to
+ * recover it and shipped a `memoryId: null` because the file had nothing to read.
  */
 export function buildHandoffMessage(origin: HandoffOrigin): string {
   const originId = origin.sessionId.length > 8 ? origin.sessionId.slice(0, 8) : origin.sessionId;
-  const lines: string[] = [
-    `Continuación de la sesión ${originId}.`,
-  ];
+  const lines: string[] = [`Continuación de la sesión ${originId}.`];
   const name = readString(origin.name);
   if (name !== undefined) lines.push(`Quedó como: "${name}".`);
-  lines.push(`Pendiente: ${origin.next}`);
+  lines.push(`Pendiente: ${origin.next}.`);
   const memory = origin.memory;
-  if (memory?.topicKey !== undefined) {
-    const id = memory.id !== undefined ? ` (id ${memory.id})` : "";
-    lines.push(`Contexto en memoria: ${memory.topicKey}${id}.`);
-  }
+  if (memory?.topicKey !== undefined) lines.push(`Contexto en memoria: ${memory.topicKey}.`);
   return lines.join(" ");
 }
