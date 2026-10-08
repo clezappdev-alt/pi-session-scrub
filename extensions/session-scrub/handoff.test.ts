@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import {
   extractMemoryRef,
   extractMemoryId,
+  findLastMemoryWrite,
   buildHandoffMessage,
   MEMORY_WRITE_TOOLS,
 } from "./handoff.ts";
@@ -127,6 +128,79 @@ test("a non-finite id is rejected", () => {
   // as a real pointer.
   assert.equal(extractMemoryId({ id: Number.NaN }), undefined);
   assert.equal(extractMemoryId({ id: Number.POSITIVE_INFINITY }), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// findLastMemoryWrite — derived from the file, not from process state
+// ---------------------------------------------------------------------------
+
+/** Build a session-shaped message entry holding toolCall parts. */
+function callEntry(parts: unknown[]): unknown {
+  return { type: "message", message: { role: "assistant", content: parts } };
+}
+const call = (name: string, args: unknown, id = "c1"): unknown => ({
+  type: "toolCall",
+  id,
+  name,
+  arguments: args,
+});
+const result = (id: string, structured: unknown): unknown => ({
+  type: "toolCallResult",
+  id,
+  content: [],
+  structuredContent: structured,
+});
+
+test("the last memory write is found even when later calls are reads", () => {
+  const entries = [
+    callEntry([call("mem_save", { title: "primera", topic_key: "p:uno" }, "c1")]),
+    callEntry([call("bash", { command: "ls" }, "c2")]),
+    callEntry([call("mem_save", { title: "la ultima", topic_key: "p:dos" }, "c3")]),
+    callEntry([call("mem_search", { query: "algo" }, "c4")]),
+    callEntry([call("mem_get_observation", { id: 5 }, "c5")]),
+  ];
+  const ref = findLastMemoryWrite(entries);
+  assert.ok(ref);
+  assert.equal(ref.title, "la ultima");
+  assert.equal(ref.topicKey, "p:dos");
+});
+
+test("the observation id is recovered by pairing the call with its result", () => {
+  const entries = [
+    callEntry([call("mem_save", { title: "con id", topic_key: "p:tres" }, "c9")]),
+    callEntry([result("c9", { id: 1592 })]),
+  ];
+  const ref = findLastMemoryWrite(entries);
+  assert.equal(ref?.id, 1592);
+});
+
+test("a write whose result never arrived yields a reference without an id", () => {
+  const entries = [callEntry([call("mem_save", { title: "sin resultado" }, "c9")])];
+  const ref = findLastMemoryWrite(entries);
+  assert.ok(ref);
+  assert.equal(ref.id, undefined);
+  assert.equal(ref.title, "sin resultado");
+});
+
+test("scanning survives malformed entries", () => {
+  const entries = [
+    null,
+    undefined,
+    "not an object",
+    { type: "message" },
+    { type: "message", message: null },
+    { type: "message", message: { content: "not a list" } },
+    { type: "message", message: { content: [null, 42, {}, { type: "toolCall" }] } },
+    callEntry([call("mem_save", { title: "sobrevive" }, "c1")]),
+  ];
+  const ref = findLastMemoryWrite(entries);
+  assert.equal(ref?.title, "sobrevive");
+});
+
+test("a session with no memory write yields nothing rather than a guess", () => {
+  assert.equal(findLastMemoryWrite([]), undefined);
+  assert.equal(findLastMemoryWrite([callEntry([call("bash", {})])]), undefined);
+  assert.equal(findLastMemoryWrite([callEntry([call("mem_search", {})])]), undefined);
 });
 
 // ---------------------------------------------------------------------------

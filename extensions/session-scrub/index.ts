@@ -37,10 +37,8 @@ import {
 } from "./classify.ts";
 import { STATE, formatName, parseName, resolveVerdict, type State } from "./name.ts";
 import {
-  extractMemoryRef,
-  extractMemoryId,
+  findLastMemoryWrite,
   buildHandoffMessage,
-  type MemoryRef,
 } from "./handoff.ts";
 
 // ---------------------------------------------------------------------------
@@ -600,39 +598,6 @@ function handleScrubClose(
 const HANDOFF_CUSTOM_TYPE = "session-scrub/handoff";
 
 /**
- * Memory observation for the traspaso.
- *
- * The plugin never calls Engram — separate packages, no API between them. It observes:
- * `tool_call` gives toolName and input, `tool_result` gives the created id. The rule is
- * blunt on purpose: the last memory WRITTEN before a traspaso is the traspaso.
- *
- * Module-level because it is per-process state about the session being worked on, and a
- * tool_result can arrive after any number of intervening turns.
- */
-let lastMemoryRef: MemoryRef | undefined;
-let pendingMemoryCallId: string | undefined;
-
-function observeToolCall(event: {
-  toolName: string;
-  toolCallId: string;
-  input: unknown;
-}): void {
-  const ref = extractMemoryRef(event.toolName, event.input);
-  if (ref === undefined) return;
-  lastMemoryRef = ref;
-  pendingMemoryCallId = event.toolCallId;
-}
-
-function observeToolResult(event: {
-  toolCallId: string;
-  structuredContent?: unknown;
-}): void {
-  if (event.toolCallId !== pendingMemoryCallId || lastMemoryRef === undefined) return;
-  const id = extractMemoryId(event.structuredContent);
-  if (id !== undefined) lastMemoryRef = { ...lastMemoryRef, id };
-}
-
-/**
  * `/scrub-handoff` — create the continuation this session promised, and start it with
  * the origin, the next step and the memory key.
  *
@@ -657,7 +622,10 @@ async function handleScrubHandoff(args: string, ctx: ExtensionCommandContext): P
   }
   const state: State = parsed.state ?? STATE.traspaso;
   const destinationName = formatName(state, next);
-  const memory = lastMemoryRef;
+  // Read from the session's own entries rather than from process state: a /reload
+  // re-imports this module, so anything held in a variable would be gone by the time the
+  // handoff runs, and the destination would lose the memory key for no visible reason.
+  const memory = findLastMemoryWrite(ctx.sessionManager.getEntries());
   const message = buildHandoffMessage({
     sessionId: originId,
     name: originName,
@@ -1719,12 +1687,6 @@ export default function (pi: ExtensionAPI): void {
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       return handleScrubClose(pi, params);
     },
-  });
-  pi.on("tool_call", async (event) => {
-    observeToolCall(event);
-  });
-  pi.on("tool_result", async (event) => {
-    observeToolResult(event);
   });
   pi.on("agent_start", async (_event, ctx) => {
     await handleAgentStart(ctx);

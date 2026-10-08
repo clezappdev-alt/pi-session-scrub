@@ -100,6 +100,52 @@ export function extractMemoryId(structured: unknown): number | undefined {
 }
 
 /**
+ * Derive the last memory written in a session, from its own entries.
+ *
+ * This replaced an earlier design that kept the reference in a module-level variable
+ * populated from `tool_call` events. That was wrong in a way the dogfooding caught
+ * immediately: a `/reload` re-imports the extension, the variable resets to undefined,
+ * and the handoff then reports "no memory" even though the session plainly wrote one.
+ * The tool calls are already persisted in the session file, so the file is the source of
+ * truth — and reading it survives a reload, a different process, and a resumed session.
+ *
+ * The call and its result are paired by tool-call id, because the observation id only
+ * exists in the result.
+ */
+export function findLastMemoryWrite(entries: readonly unknown[]): MemoryRef | undefined {
+  let found: MemoryRef | undefined;
+  let foundCallId: string | undefined;
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const message = (entry as { message?: unknown }).message;
+    if (typeof message !== "object" || message === null) continue;
+    const content = (message as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (typeof part !== "object" || part === null) continue;
+      const shape = part as {
+        type?: unknown;
+        name?: unknown;
+        arguments?: unknown;
+        id?: unknown;
+        structuredContent?: unknown;
+      };
+      if (shape.type === "toolCall" && typeof shape.name === "string") {
+        const ref = extractMemoryRef(shape.name, shape.arguments);
+        if (ref !== undefined) {
+          found = ref;
+          foundCallId = typeof shape.id === "string" ? shape.id : undefined;
+        }
+      } else if (shape.type === "toolCallResult" && shape.id === foundCallId) {
+        const id = extractMemoryId(shape.structuredContent);
+        if (id !== undefined && found !== undefined) found = { ...found, id };
+      }
+    }
+  }
+  return found;
+}
+
+/**
  * Compose what the destination session starts with.
  *
  * This goes into a `custom_message` with `display: false`, which means it reaches the
