@@ -1,10 +1,19 @@
 # session-scrub — behavior specification (as-built)
 
 **Status:** as-built documentation, derived from source only.
+**Reflects:** released behavior at `v0.3.0` (`3dd6361`). **Refreshed at each tag**, not per commit.
 **Source of truth:** `extensions/session-scrub/index.ts` @ `c34b1d6`, 1682 lines.
 Every behavioral claim below carries a `path:line` citation to that file. Where a
 claim could not be verified from the source, it is written as
 `UNVERIFIED: <what could not be confirmed, and why>`.
+
+> **Unreleased changes are not reflected here.** Commits after `3dd6361` change the
+> classifier: `6fe1f77` extracted the predicate to `classify.ts`, and `3b0f588` reordered
+> it (NM-04 verdict precedence, NM-05 conversation-turn floor). §1 therefore describes the
+> **previous** decision tree. Against the working tree, an explicit `keep`/`paused`
+> verdict now protects an old or empty unnamed session, and an unnamed session with 5 or
+> more conversation turns is never a deletion candidate for being unnamed. This document
+> is corrected at the next tag.
 
 Rules used to produce this document:
 
