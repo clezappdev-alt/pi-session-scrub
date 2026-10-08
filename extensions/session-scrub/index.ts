@@ -35,6 +35,7 @@ import {
   countConversationTurns,
   samePath,
 } from "./classify.ts";
+import { STATE, formatName, parseName, resolveVerdict, type State } from "./name.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -332,7 +333,9 @@ async function auditSessions(ctx: ExtensionCommandContext): Promise<{
     const entries = isLive
       ? ctx.sessionManager.getEntries()
       : openSessionEntries(info.path);
-    const verdict = readLatestVerdict(entries);
+    // Single carrier: a name that declares a state outranks the verdict entry.
+    // The entry is still honoured for sessions written before the convention.
+    const verdict = resolveVerdict(info.name ?? "", readLatestVerdict(entries));
     const ephemeralFlow =
       verdict !== VERDICTS.trash &&
       matchesEphemeralFlow(userTexts(entries).join("\n"), policy.ephemeralFlows);
@@ -528,6 +531,17 @@ async function handleScrubMark(
   if (!isVerdict(params.verdict)) {
     return toolResult(`Invalid verdict. Use one of: keep, paused, finished, ephemeral, trash.`);
   }
+  // The name is the single carrier (see name.ts resolveVerdict). Writing a verdict entry
+  // for a session that already declares a state would leave two records disagreeing, and
+  // the audit would silently prefer the name — so refuse rather than write a record that
+  // cannot take effect.
+  const currentName = ctx.sessionManager.getSessionName();
+  if (parseName(currentName ?? "").state !== undefined) {
+    return toolResult(
+      `This session already declares its state as "${currentName}". The name is the record; ` +
+        `use scrub_close to change it. Nothing was written.`,
+    );
+  }
   const liveFile = ctx.sessionManager.getSessionFile();
   if (liveFile === undefined) {
     return toolResult("No live session file; verdict not recorded.");
@@ -543,6 +557,38 @@ async function handleScrubMark(
   } catch (err) {
     return toolResult(`Could not record verdict: ${errorMessage(err)}`);
   }
+}
+
+const ScrubCloseParams = Type.Object({
+  state: Type.Union([
+    Type.Literal(STATE.pausa),
+    Type.Literal(STATE.abierto),
+    Type.Literal(STATE.espera),
+    Type.Literal(STATE.traspaso),
+    Type.Literal(STATE.hecho),
+  ]),
+  text: Type.String(),
+});
+
+/**
+ * Close a work block by naming this session.
+ *
+ * `pi.setSessionName` is on ExtensionAPI, not on ExtensionToolContext — the ctx a tool
+ * receives has a read-only sessionManager and no setter. So `pi` arrives by closure from
+ * the factory. That is also the safe path: it is the same call `/name` makes, so memory
+ * and disk are updated together and a live session cannot flush the name away.
+ */
+function handleScrubClose(
+  pi: ExtensionAPI,
+  params: Static<typeof ScrubCloseParams>,
+): ReturnType<typeof toolResult> {
+  const name = formatName(params.state as State, params.text);
+  try {
+    pi.setSessionName(name);
+  } catch (err) {
+    return toolResult(`Could not set the session name: ${errorMessage(err)}`);
+  }
+  return toolResult(`Session name set: ${name}`);
 }
 
 /** Sessions already offered the hint in this process (gate file may not exist yet). */
@@ -1533,6 +1579,16 @@ export default function (pi: ExtensionAPI): void {
     parameters: ScrubMarkParams,
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
       return handleScrubMark(params, ctx);
+    },
+  });
+  pi.registerTool({
+    name: "scrub_close",
+    label: "Close this work block",
+    description:
+      "Name this session so /resume says where the work continues. state: pausa (here, next step known), abierto (here, unknown), espera (blocked elsewhere), traspaso (continues in another session), hecho (finished). text says the next step, not a summary.",
+    parameters: ScrubCloseParams,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      return handleScrubClose(pi, params);
     },
   });
   pi.on("agent_start", async (_event, ctx) => {

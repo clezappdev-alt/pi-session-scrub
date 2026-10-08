@@ -112,6 +112,35 @@ export function verdictFromState(state: State | undefined): Verdict | undefined 
 }
 
 /**
+ * Derive the verdict a full session name implies, or undefined if it declares none.
+ *
+ * Thin composition of parseName + verdictFromState, kept separate because callers
+ * almost always hold a name rather than an already-parsed state.
+ */
+export function verdictFromName(name: string): Verdict | undefined {
+  return verdictFromState(parseName(name).state);
+}
+
+/**
+ * Resolve which verdict applies to a session, given both carriers.
+ *
+ * The name is the record and outranks the verdict entry. Two writers would diverge the
+ * moment one write was skipped, and the divergence would be visible as a stale promise
+ * in /resume — worse than no name, because a stale promise gets trusted.
+ *
+ * The entry is still consulted when the name declares no state, because sessions
+ * written before the convention exist only as entries. Dropping those would silently
+ * discard every historical verdict.
+ */
+export function resolveVerdict(
+  name: string,
+  entryVerdict: Verdict | undefined,
+): Verdict | undefined {
+  const derived = verdictFromName(name);
+  return derived !== undefined ? derived : entryVerdict;
+}
+
+/**
  * Turn an Engram topic key into readable proposal text.
  *
  * The namespace is dropped only when it repeats the project you are already in —

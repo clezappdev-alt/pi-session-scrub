@@ -15,6 +15,8 @@ import {
   parseName,
   formatName,
   verdictFromState,
+  verdictFromName,
+  resolveVerdict,
   proposeNameFromTopicKey,
 } from "./name.ts";
 
@@ -133,6 +135,52 @@ test("derived verdicts are distinct from ephemeral and trash", () => {
     const verdict = verdictFromState(state);
     assert.notEqual(verdict, "ephemeral");
     assert.notEqual(verdict, "trash");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// verdictFromName — the single-carrier rule
+// ---------------------------------------------------------------------------
+
+test("verdictFromName reads the state a name declares", () => {
+  assert.equal(verdictFromName("pausa: falta el spec"), "paused");
+  assert.equal(verdictFromName("hecho: triage instalado"), "finished");
+  assert.equal(verdictFromName("PAUSA: algo"), "paused");
+});
+
+test("verdictFromName on a name that declares nothing stays undefined", () => {
+  assert.equal(verdictFromName("sys nueva gentle-knowled"), undefined);
+  assert.equal(verdictFromName(""), undefined);
+  assert.equal(verdictFromName("   "), undefined);
+  assert.equal(verdictFromName("nota: prefijo desconocido"), undefined);
+});
+
+test("the name outranks a verdict entry when both exist", () => {
+  // Single carrier: the name is the record. A session declared `hecho:` must not be
+  // resurrected as paused because an older verdict entry disagrees.
+  assert.equal(resolveVerdict("hecho: cerramos", "paused"), "finished");
+  assert.equal(resolveVerdict("pausa: falta", "finished"), "paused");
+});
+
+test("a verdict entry is still honoured when the name declares nothing", () => {
+  // Sessions written before the convention exist only as entries. Ignoring those would
+  // silently drop every historical verdict.
+  assert.equal(resolveVerdict("sys nueva gentle-knowled", "finished"), "finished");
+  assert.equal(resolveVerdict("sin prefijo", "trash"), "trash");
+});
+
+test("neither carrier present yields no opinion at all", () => {
+  assert.equal(resolveVerdict("", undefined), undefined);
+  assert.equal(resolveVerdict("nombre suelto", undefined), undefined);
+});
+
+test("resolveVerdict never invents a verdict from a name alone", () => {
+  for (const state of ALL_STATES) {
+    const verdict = resolveVerdict(formatName(state, "algo"), undefined);
+    assert.ok(
+      verdict === "paused" || verdict === "keep" || verdict === "finished",
+      `${state} must resolve to a real verdict, got ${verdict}`,
+    );
   }
 });
 
