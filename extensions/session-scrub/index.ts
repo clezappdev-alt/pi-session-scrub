@@ -13,8 +13,7 @@ import {
   readFileSync,
   writeFileSync,
   existsSync,
-  realpathSync,
-} from "node:fs";
+  } from "node:fs";
 import { Type, type Static } from "typebox";
 import {
   SessionManager,
@@ -24,40 +23,21 @@ import {
   type SessionEntry,
   type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
+import {
+  MAX_AGE_MS,
+  VERDICTS,
+  CLASS_KIND,
+  type Verdict,
+  type Classification,
+  type VerdictData,
+  type LiveIdentity,
+  classifySession,
+  samePath,
+} from "./classify.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-/** Age gate: sessions >= 7 days old need confirmation with detail (never auto). */
-const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-
-const VERDICTS = {
-  keep: "keep",
-  paused: "paused",
-  finished: "finished",
-  ephemeral: "ephemeral",
-  trash: "trash",
-} as const;
-type Verdict = (typeof VERDICTS)[keyof typeof VERDICTS];
-
-const CLASS_KIND = {
-  live: "live",
-  namedProtected: "named-protected",
-  autoDeletable: "auto-deletable",
-  candidate: "candidate",
-  oldNeedsConfirm: "old-needs-confirm",
-  kept: "kept",
-} as const;
-
-const CANDIDATE_REASON = {
-  explicitTrash: "explicit-trash",
-  finished: "finished",
-  ephemeral: "ephemeral",
-  empty: "empty",
-} as const;
-type CandidateReason =
-  (typeof CANDIDATE_REASON)[keyof typeof CANDIDATE_REASON];
 
 const VERDICT_CUSTOM_TYPE = "session-scrub/verdict";
 const HINT_CUSTOM_TYPE = "session-scrub/name-hint";
@@ -95,55 +75,6 @@ ephemeral-flows: <flow-name-1>, <flow-name-2>
 // ---------------------------------------------------------------------------
 // Flat interfaces (strict-typed, no nested unions beyond Classification)
 // ---------------------------------------------------------------------------
-
-interface VerdictData {
-  version: number;
-  verdict: Verdict;
-  at: string;
-  reason?: string;
-}
-
-interface SessionDetail {
-  name?: string;
-  firstMessage: string;
-  messageCount: number;
-  created: Date;
-  modified: Date;
-  verdict?: Verdict;
-}
-
-interface LiveClassification {
-  kind: typeof CLASS_KIND.live;
-}
-interface NamedProtectedClassification {
-  kind: typeof CLASS_KIND.namedProtected;
-  name: string;
-  verdict?: Verdict;
-}
-interface AutoDeletableClassification {
-  kind: typeof CLASS_KIND.autoDeletable;
-  reason: typeof CANDIDATE_REASON.empty;
-}
-interface CandidateClassification {
-  kind: typeof CLASS_KIND.candidate;
-  reason: CandidateReason;
-  verdict?: Verdict;
-}
-interface OldNeedsConfirmClassification {
-  kind: typeof CLASS_KIND.oldNeedsConfirm;
-  detail: SessionDetail;
-}
-interface KeptClassification {
-  kind: typeof CLASS_KIND.kept;
-  reason: string;
-}
-type Classification =
-  | LiveClassification
-  | NamedProtectedClassification
-  | AutoDeletableClassification
-  | CandidateClassification
-  | OldNeedsConfirmClassification
-  | KeptClassification;
 
 interface PolicyConfig {
   ephemeralFlows: string[];
@@ -205,87 +136,6 @@ function deriveSlug(firstUserText: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
-}
-
-/** D2 decision tree verbatim: live → named-trash-only → candidates → empty → old → kept. */
-interface LiveIdentity {
-  path?: string;
-  id?: string;
-}
-
-/** Same file even if one side is a symlink or relative: compare resolved paths. */
-function samePath(a: string, b: string): boolean {
-  if (a === b) return true;
-  try {
-    return realpathSync(a) === realpathSync(b);
-  } catch {
-    return false;
-  }
-}
-
-function classifySession(
-  s: SessionInfo,
-  live: LiveIdentity,
-  verdict: Verdict | undefined,
-  ephemeralFlow: boolean,
-): Classification {
-  if (
-    (live.path !== undefined && samePath(s.path, live.path)) ||
-    (live.id !== undefined && s.id === live.id)
-  ) {
-    return { kind: CLASS_KIND.live };
-  }
-  if (s.name !== undefined && s.name.trim().length > 0) {
-    if (verdict === VERDICTS.trash) {
-      return {
-        kind: CLASS_KIND.candidate,
-        reason: CANDIDATE_REASON.explicitTrash,
-        verdict,
-      };
-    }
-    return { kind: CLASS_KIND.namedProtected, name: s.name, verdict };
-  }
-  if (verdict === VERDICTS.trash) {
-    return {
-      kind: CLASS_KIND.candidate,
-      reason: CANDIDATE_REASON.explicitTrash,
-      verdict,
-    };
-  }
-  if (verdict === VERDICTS.finished) {
-    return {
-      kind: CLASS_KIND.candidate,
-      reason: CANDIDATE_REASON.finished,
-      verdict,
-    };
-  }
-  if (verdict === VERDICTS.ephemeral || ephemeralFlow) {
-    return {
-      kind: CLASS_KIND.candidate,
-      reason: CANDIDATE_REASON.ephemeral,
-      verdict,
-    };
-  }
-  if (s.messageCount === 0) {
-    return { kind: CLASS_KIND.autoDeletable, reason: CANDIDATE_REASON.empty };
-  }
-  if (Date.now() - s.created.getTime() >= MAX_AGE_MS) {
-    return {
-      kind: CLASS_KIND.oldNeedsConfirm,
-      detail: {
-        name: s.name,
-        firstMessage: s.firstMessage,
-        messageCount: s.messageCount,
-        created: s.created,
-        modified: s.modified,
-        verdict,
-      },
-    };
-  }
-  if (verdict !== undefined) {
-    return { kind: CLASS_KIND.kept, reason: `has-verdict-${verdict}` };
-  }
-  return { kind: CLASS_KIND.kept, reason: "has-content-no-verdict" };
 }
 
 /** F4 grammar: skip `#`/blank lines; `<...>` placeholders read as empty. */
