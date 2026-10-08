@@ -1585,7 +1585,14 @@ export default function (pi: ExtensionAPI): void {
     name: "scrub_close",
     label: "Close this work block",
     description:
-      "Name this session so /resume says where the work continues. state: pausa (here, next step known), abierto (here, unknown), espera (blocked elsewhere), traspaso (continues in another session), hecho (finished). text says the next step, not a summary.",
+      "Name this session so /resume says where the work continues. " +
+      "state: pausa (here, next step known), abierto (here, unknown), " +
+      "espera (blocked elsewhere), traspaso (continues in another session), " +
+      "hecho (finished). " +
+      "text is read by a human scanning /resume, so: the NEXT step in plain words, " +
+      "not what you implemented, not symbol names, not an API call. One glanceable line. " +
+      "If a state word would contradict the text — a 'pausa:' whose text says the work " +
+      "moves elsewhere — pick the state that matches, because they are mutually exclusive.",
     parameters: ScrubCloseParams,
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       return handleScrubClose(pi, params);
