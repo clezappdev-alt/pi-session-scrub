@@ -18,6 +18,8 @@
 /** Tools that CREATE a memory. Reads deliberately do not count. */
 export const MEMORY_WRITE_TOOLS: readonly string[] = ["mem_save", "mem_session_summary"];
 
+import { STATE, formatName, parseName } from "./name.ts";
+
 export interface MemoryRef {
   /** From the tool result. Absent until the tool has reported success. */
   id?: number;
@@ -97,6 +99,64 @@ export function extractMemoryId(structured: unknown): number | undefined {
     }
   }
   return undefined;
+}
+
+/** Short id as it appears in a session name: the first 8 hex characters. */
+const SHORT_ID_LENGTH = 8;
+
+/**
+ * Remove a leading lineage marker from free text.
+ *
+ * A handoff writes its id into both names — the origin carries its own, the destination
+ * says which one it inherited from — so the pair can be matched in the picker without
+ * opening anything. The cost is that the destination's text now starts with a marker, and
+ * handing off again would embed the previous one, producing `desde a · desde b · …` that
+ * grows without bound.
+ *
+ * Stripping the leading marker keeps the text at exactly one, so a long chain stays one
+ * readable line. Only the leading one is removed: a marker appearing later in the text is
+ * part of the human's words.
+ */
+export function stripLineage(text: string): string {
+  return text.replace(/^(?:desde\s+)?[0-9a-f]{8}\s*·\s*/, "").trim();
+}
+
+/**
+ * Plan the two names a handoff produces.
+ *
+ * The first real handoff produced two byte-identical names because the destination
+ * inherited the origin's state and text. Beyond being untidy, it is false: a session
+ * named `traspaso:` asserts the work continues in *another* session, and after the handoff
+ * the destination is that other session. Copying the state forward contradicts the
+ * exclusivity rule the six states are built on.
+ *
+ * So the origin is always marked `traspaso:` — whatever it was called, after a handoff the
+ * work no longer sits there — and the destination is always `pausa:`: the work arrived
+ * here, at a known point, with the next step written. The two can never collide.
+ *
+ * Both carry the short session id, because `parentSession` already records the link but
+ * the picker renders nothing but the name; without the id in the name the relation is
+ * invisible until a session is opened.
+ *
+ * Returns undefined when there is no next step to carry, because a handoff with nothing to
+ * hand over is not a handoff.
+ */
+export function planHandoffNames(
+  originName: string,
+  argumentText: string,
+  originSessionId: string,
+): { next: string; originName: string; destinationName: string } | undefined {
+  const parsed = parseName(originName);
+  const fromArgs = argumentText.trim();
+  const candidate = fromArgs.length > 0 ? fromArgs : parsed.text;
+  const next = stripLineage(candidate);
+  if (next.length === 0) return undefined;
+  const shortId = originSessionId.slice(0, SHORT_ID_LENGTH);
+  return {
+    next,
+    originName: formatName(STATE.traspaso, `${shortId} · ${next}`),
+    destinationName: formatName(STATE.pausa, `desde ${shortId} · ${next}`),
+  };
 }
 
 /**

@@ -38,6 +38,7 @@ import {
 import { STATE, formatName, parseName, resolveVerdict, type State } from "./name.ts";
 import {
   findLastMemoryWrite,
+  planHandoffNames,
   buildHandoffMessage,
 } from "./handoff.ts";
 
@@ -606,13 +607,15 @@ const HANDOFF_CUSTOM_TYPE = "session-scrub/handoff";
  * session. That is the right shape anyway — creating a session is deliberate and visible,
  * so a human should type it rather than have it fire mid-turn.
  */
-async function handleScrubHandoff(args: string, ctx: ExtensionCommandContext): Promise<void> {
+async function handleScrubHandoff(
+  pi: ExtensionAPI,
+  args: string,
+  ctx: ExtensionCommandContext,
+): Promise<void> {
   const originId = ctx.sessionManager.getSessionId();
   const originName = ctx.sessionManager.getSessionName() ?? "";
-  const parsed = parseName(originName);
-  const fromArgs = args.trim();
-  const next = fromArgs.length > 0 ? fromArgs : parsed.text;
-  if (next.length === 0) {
+  const plan = planHandoffNames(originName, args, originId);
+  if (plan === undefined) {
     ctx.ui.notify(
       "scrub-handoff: this session names no next step to carry. Name it first with /name " +
         "using a state prefix, or pass the next step as an argument.",
@@ -620,57 +623,59 @@ async function handleScrubHandoff(args: string, ctx: ExtensionCommandContext): P
     );
     return;
   }
-  const state: State = parsed.state ?? STATE.traspaso;
-  const destinationName = formatName(state, next);
+
+  // Mark the origin as handed off while it is still the current session, so the picker
+  // shows the two halves of the pair rather than two identical rows. pi.setSessionName is
+  // on ExtensionAPI, not on ctx — hence the closure.
+  pi.setSessionName(plan.originName);
+
   // Read from the session's own entries rather than from process state: a /reload
   // re-imports this module, so anything held in a variable would be gone by the time the
   // handoff runs, and the destination would lose the memory key for no visible reason.
   const memory = findLastMemoryWrite(ctx.sessionManager.getEntries());
   const message = buildHandoffMessage({
     sessionId: originId,
-    name: originName,
-    next,
+    name: plan.originName,
+    next: plan.next,
     memory,
   });
 
   const result = await ctx.newSession({
     parentSession: originId,
     setup: async (sessionManager) => {
-      // custom_message with display:false reaches the model (sessionEntryToContextMessages
-      // includes custom_message) while rendering nothing in the transcript. A plain custom
-      // entry would be invisible to the agent; a normal message would be visible to the
-      // human and would remain a visible turn forever.
-      // CustomMessage shape (role:"custom"), not the CustomMessageEntryDraft shape
-      // (type:"custom_message") — appendMessage takes the former.
-      sessionManager.appendMessage({
-        role: "custom",
-        customType: HANDOFF_CUSTOM_TYPE,
-        content: message,
-        display: false,
-        timestamp: Date.now(),
-        details: {
+      // appendCustomMessageEntry, not appendMessage. appendMessage wraps whatever it is
+      // given as { type: "message" }, and sessionEntryToContextMessages dispatches on
+      // entry.type — so a CustomMessage sent through appendMessage is written but never
+      // reaches the model. The first handoff shipped exactly that mistake and the
+      // destination agent reconstructed everything from memory instead.
+      sessionManager.appendCustomMessageEntry(
+        HANDOFF_CUSTOM_TYPE,
+        message,
+        false,
+        {
           originSessionId: originId,
-          originName,
+          originName: plan.originName,
           memoryTopicKey: memory?.topicKey ?? null,
           memoryId: memory?.id ?? null,
         },
-      });
-      sessionManager.appendSessionInfo(destinationName);
+      );
+      sessionManager.appendSessionInfo(plan.destinationName);
     },
     withSession: async (fresh) => {
       fresh.ui.notify(
         memory?.topicKey !== undefined
-          ? `Handoff: ${destinationName} — contexto en memoria ${memory.topicKey}`
-          : `Handoff: ${destinationName} — sin memoria previa en esta sesión`,
+          ? `Handoff: ${plan.destinationName} — contexto en memoria ${memory.topicKey}`
+          : `Handoff: ${plan.destinationName} — sin memoria previa en esta sesión`,
         "info",
       );
     },
   });
 
   if (result.cancelled) {
-    // The old ctx is stale after a session switch, but a cancel leaves us in the
-    // original session, so notifying here is safe.
-    ctx.ui.notify("scrub-handoff: cancelled, no new session was created.", "warning");
+    ctx.ui.notify(
+      "scrub-handoff: cancelled, no new session was created.",
+      "warning",
+    );
   }
 }
 
@@ -1668,7 +1673,7 @@ export default function (pi: ExtensionAPI): void {
     description:
       "Create the continuation this session promised: a new session, named and seeded with this session, the next step, and the key of the last memory written here. Use after naming this session with a 'traspaso:' state.",
     handler: async (args, ctx) => {
-      await handleScrubHandoff(args, ctx);
+      await handleScrubHandoff(pi, args, ctx);
     },
   });
   pi.registerTool({

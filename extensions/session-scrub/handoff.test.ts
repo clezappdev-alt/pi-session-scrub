@@ -12,6 +12,8 @@ import {
   extractMemoryRef,
   extractMemoryId,
   findLastMemoryWrite,
+  stripLineage,
+  planHandoffNames,
   buildHandoffMessage,
   MEMORY_WRITE_TOOLS,
 } from "./handoff.ts";
@@ -201,6 +203,126 @@ test("a session with no memory write yields nothing rather than a guess", () => 
   assert.equal(findLastMemoryWrite([]), undefined);
   assert.equal(findLastMemoryWrite([callEntry([call("bash", {})])]), undefined);
   assert.equal(findLastMemoryWrite([callEntry([call("mem_search", {})])]), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// stripLineage — names must not accumulate ancestry
+// ---------------------------------------------------------------------------
+
+test("a lineage marker is stripped so the text never grows", () => {
+  // Without this, each handoff re-embeds the previous one's marker and the name becomes
+  // a wall of 'desde' clauses after a few rounds.
+  assert.equal(stripLineage("desde 01a11719 · falta probar"), "falta probar");
+  assert.equal(stripLineage("01a11719 · falta probar"), "falta probar");
+});
+
+test("only the leading marker is stripped", () => {
+  assert.equal(
+    stripLineage("desde 01a11719 · ver el id 01a11719 otra vez"),
+    "ver el id 01a11719 otra vez",
+  );
+});
+
+test("text that merely looks like an id is left alone", () => {
+  // Eight hex characters are the marker. A year, a four-digit count, or a longer word
+  // that begins with hex is not.
+  assert.equal(stripLineage("2026 revisar el spec"), "2026 revisar el spec");
+  assert.equal(stripLineage("deadbeefZZ algo"), "deadbeefZZ algo");
+  assert.equal(stripLineage("falta probar"), "falta probar");
+});
+
+test("stripping is idempotent", () => {
+  const once = stripLineage("desde 01a11719 · desde 01a11c59 · falta probar");
+  assert.equal(once, "desde 01a11c59 · falta probar");
+  assert.equal(stripLineage(once), "falta probar");
+});
+
+test("the marker forms match what planHandoffNames writes", () => {
+  // A round-trip guard: whatever the plan emits, stripping must put it back.
+  const plan = planHandoffNames("pausa: revisar", "", "01a11719-aaaa-7bbb-8ccc-ddddeeeeffff");
+  assert.ok(plan);
+  assert.equal(stripLineage(plan.destinationName.replace(/^pausa:\s*/, "")), "revisar");
+});
+
+// ---------------------------------------------------------------------------
+// planHandoffNames — the two names of a handoff
+// ---------------------------------------------------------------------------
+
+test("the origin is marked as handed off and the destination as received", () => {
+  const plan = planHandoffNames("traspaso: falta probar el traspaso", "", "01a11719");
+  assert.ok(plan);
+  assert.equal(plan.originName, "traspaso: 01a11719 · falta probar el traspaso");
+  assert.equal(plan.destinationName, "pausa: desde 01a11719 · falta probar el traspaso");
+});
+
+test("both names carry the id, so the pair can be matched in the picker", () => {
+  // The destination says which session it inherited from; the origin says its own id so
+  // that id can be found again without opening anything.
+  const plan = planHandoffNames("pausa: falta el spec", "", "01a11719-aaaa-7bbb");
+  assert.ok(plan);
+  assert.ok(plan.originName.includes("01a11719"));
+  assert.ok(plan.destinationName.includes("01a11719"));
+});
+
+test("a long session id is shortened", () => {
+  const plan = planHandoffNames("pausa: x", "", "01a11719-aaaa-7bbb-8ccc-ddddeeeeffff");
+  assert.ok(plan);
+  assert.ok(!plan.originName.includes("aaaa"), "full uuid must not leak into the name");
+});
+
+test("a handoff from a pausa session still marks the origin as handed off", () => {
+  const plan = planHandoffNames("pausa: falta el spec", "", "01a11719");
+  assert.equal(plan?.originName, "traspaso: 01a11719 · falta el spec");
+  assert.equal(plan?.destinationName, "pausa: desde 01a11719 · falta el spec");
+});
+
+test("a chain does not accumulate ancestry", () => {
+  // Handing off from a session that already carries a marker must produce exactly one.
+  const first = planHandoffNames("traspaso: falta probar", "", "01a11719");
+  const second = planHandoffNames(first!.destinationName, "", "01a11c59");
+  assert.equal(
+    second!.originName,
+    "traspaso: 01a11c59 · falta probar",
+    "the previous marker must not be re-embedded",
+  );
+  assert.equal(second!.destinationName, "pausa: desde 01a11c59 · falta probar");
+});
+
+test("the two names never collide, whatever the origin was called", () => {
+  for (const origin of [
+    "traspaso: falta probar el traspaso",
+    "pausa: falta el spec",
+    "abierto: reescribiendo el parser",
+    "espera: veredicto de F2",
+    "hecho: triage instalado",
+    "nombre sin prefijo",
+    // An unnamed-free session whose name is the only description available: the name is
+    // the text, and there is nothing else to carry.
+    "sin prefijo ni texto",
+  ]) {
+    const plan = planHandoffNames(origin, "", "01a11719");
+    assert.ok(plan, `expected a plan for ${JSON.stringify(origin)}`);
+    assert.notEqual(
+      plan.originName,
+      plan.destinationName,
+      `origin and destination must differ for ${JSON.stringify(origin)}`,
+    );
+  }
+});
+
+test("the next step comes from the argument when the name has none", () => {
+  const plan = planHandoffNames("nombre sin prefijo", "  escribir el spec  ", "01a11719");
+  assert.equal(plan?.originName, "traspaso: 01a11719 · escribir el spec");
+  assert.equal(plan?.destinationName, "pausa: desde 01a11719 · escribir el spec");
+});
+
+test("with no next step anywhere there is no handoff to plan", () => {
+  // A session with no state and no name carries nothing, so there is nothing to hand
+  // over. A session whose *name* is the text does carry something — the name is the only
+  // description that exists — which is why "sin prefijo ni texto" is not in this list.
+  assert.equal(planHandoffNames("", "", "01a11719"), undefined);
+  assert.equal(planHandoffNames("pausa:", "   ", "01a11719"), undefined);
+  assert.equal(planHandoffNames("espera:", "", "01a11719"), undefined);
 });
 
 // ---------------------------------------------------------------------------
