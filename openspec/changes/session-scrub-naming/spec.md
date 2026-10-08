@@ -148,14 +148,29 @@ Grounding, from a read-only sweep of all 75 sessions across both homes (2026-10-
 - Line count is also rejected: `lines` counts non-conversation entries (model changes,
   thinking-level changes, custom entries), which mixes volume with dialogue.
 
-**Field semantics to verify during implementation.** `classifySession` receives
-`SessionInfo` and today reads `SessionInfo.messageCount` (`index.ts:269`), a Pi API field
-whose exact counting semantics are not verified by this spec. The plugin's synthesized
-live record sets `messageCount` to `entries.length` (`index.ts:504`), which counts every
-entry type — a different meaning for the same field name. The implementer MUST confirm what
-Pi counts in `SessionInfo.messageCount`. If it is not `user`+`assistant` messages, the
-threshold MUST be adjusted for the difference or the count plumbed explicitly. **Recorded as
-UNVERIFIED at spec time.**
+**Field semantics — resolved 2026-10-07, and the proxy is unusable.** `classifySession`
+reads `SessionInfo.messageCount` (`index.ts:269`), and that field was verified empirically
+against Pi 1.0.4 by importing `SessionManager` directly and comparing against the raw
+files: over 20 sessions from 10 distinct cwds, `messageCount` equals the number of
+entries whose `type` is `message`, **across all roles** — `system`, `user`, `assistant`
+and `toolResult`. It matches `user`+`assistant` in 0 of 20.
+
+The inflation is roughly 1.8x, because `toolResult` entries dominate. Observed pairs
+(conversation turns → `messageCount`): 2→3, 6→7, 33→64, 73→141, 778→1479. A floor of 5 on
+`messageCount` would therefore protect sessions with roughly 3 conversation turns — more
+permissive than the five-turn floor this requirement specifies.
+
+**Therefore the implementation MUST NOT use `messageCount` as the turn count.** It MUST
+count messages whose `role` is `user` or `assistant`, computed where the audit already
+reads entries (`openSessionEntries` at `index.ts:482`, or `ctx.sessionManager.getEntries()`
+for the live session) and passed into `classifySession` alongside `verdict` and
+`ephemeralFlow`. The function currently receives only `SessionInfo`; adding the parameter
+is required, and this change is already known to alter the signature (see
+`docs/behavior.md` §11 drift item 3).
+
+For reference only, had the proxy been used, `messageCount >= 7` would have separated the
+observed population (trivial max 3, real work min 7). That number is recorded so the
+failure mode is recognizable, not as a recommended threshold.
 
 #### Scenario: large unnamed work session is protected
 - GIVEN an unnamed session with 778 conversation turns and no verdict
