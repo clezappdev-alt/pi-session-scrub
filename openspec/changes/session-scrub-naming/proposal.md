@@ -25,9 +25,13 @@ findable.
 
 ## 2. Problem
 
-1. **The plugin stops one step short of its purpose.** It offers `sugerido: /name <slug>`
-   in a status line, writes a `name-hint` gate entry, and stops. The human must leave,
-   resume the session, and type `/name`. The suggestion has no effect on its own.
+1. **Naming exists, but only coupled to triage.** `/scrub-triage --apply` already accepts
+   `id:name:"slug"` lines and writes names through `appendRenameToOther`
+   (`index.ts:1182`, Slice-3 UX-05), with per-item consent, a live-session refusal and a
+   post-write re-read. What does not exist is naming that stands on its own: the passive
+   hint offers `sugerido: /name <slug>`, writes a `name-hint` gate entry, and stops — so
+   acting on a suggestion still means leaving the session and typing `/name`, and the
+   rename path is only reachable inside a triage pass.
 2. **The slug is weak exactly where it matters.** `deriveSlug` reads the first user
    message. For a 2-turn session that is a good name; for the 778-turn model-alignment
    workstream it produces a generic label.
@@ -43,14 +47,23 @@ findable.
 
 ## 3. Decision — reversal of REQ-09
 
-**REQ-09 currently states:** *"…and MUST NOT call `setSessionName()` programmatically;
+**REQ-09 (Slice-1) states:** *"…and MUST NOT call `setSessionName()` programmatically;
 naming happens only via the user's `/name`."*
 
-**REVERSED.** Programmatic naming is permitted for sessions in the current runtime's own
-home, subject to the invariants below. The existing hint behaviour of REQ-09 (once per
-unnamed session, gated by `session-scrub/name-hint`) is unchanged and remains the
-default path: the plugin suggests, the human accepts by typing `/name`. Programmatic
-naming is an additional opt-in path, never an automatic one.
+**That clause is stale rather than authoritative.** The same canonical spec already
+authorises programmatic naming in its Slice-3 section — UX-05 (`spec.md:598-600`)
+specifies the consented rename path implemented by `appendRenameToOther`. The two sections
+were never reconciled after the triage-UX slice: the same divergence recorded for TR-02
+in `docs/behavior.md` §11, where the canonical spec still describes machine-first triage
+ordering that the code replaced.
+
+**This change therefore reconciles a stale clause rather than unlocking a new capability.**
+The REQ-09 prohibition is withdrawn and the invariants below become the single normative
+boundary for naming. Naming remains permitted for sessions in the current runtime's own
+home only, and only on an explicit user action. The existing hint behaviour (once per
+unnamed session, gated by `session-scrub/name-hint`) is unchanged and remains the default
+path: the plugin suggests, the human accepts by typing `/name`. Programmatic naming is an
+additional opt-in path, never an automatic one.
 
 **`session_info.name` and `session-scrub/name-hint` remain separate entry types with
 distinct roles.** `name` is what the human reads to resume; `name-hint` is a pending
@@ -64,7 +77,9 @@ The §Out of scope line *"LLM naming / programmatic `setSessionName()`"* is remo
 The prohibition dates from the `session-hygiene` failure recorded in `PRD.md` — a hook
 that injected ~400 tokens of ceremony into every first turn and blocked real work. That
 concern is real and is not being dismissed; it is addressed by §4 rather than by
-keeping a prohibition that no longer matches what is being built.
+keeping a prohibition that no longer matches what is being built. Note also that the
+capability it prohibits was reintroduced under a different section without anyone
+noticing, which is itself an argument for stating the boundary once, here.
 
 ## 4. Invariants that survive the reversal
 
