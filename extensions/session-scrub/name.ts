@@ -53,6 +53,11 @@ export interface ParsedName {
  * `abierto:`, and an unknown prefix must stay free text — if the vocabulary grows later,
  * names written under the old vocabulary keep parsing as text instead of silently
  * becoming stateful.
+ *
+ * Round-trip contract, relied on by `formatName` and by anything that proposes a name
+ * the human may retype: `parseName(formatName(state, text))` yields that same `state`
+ * and that same `text`. It holds for every state, and `formatName` is idempotent, so a
+ * prefixed text fed back in loses its old prefix instead of stacking a second one.
  */
 export function parseName(name: string): ParsedName {
   const trimmed = name.trim();

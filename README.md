@@ -3,6 +3,7 @@
 Keep your Pi `/resume` list clean and descriptive — without the per-session opening ceremony.
 
 > As-built behavior specification, cited to source: [`docs/behavior.md`](docs/behavior.md).
+> Reflects released behavior as of `v0.3.0`; refreshed at each tag, not per commit.
 
 ## Why
 
