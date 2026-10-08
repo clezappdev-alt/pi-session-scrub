@@ -18,6 +18,17 @@ import type { SessionInfo } from "@earendil-works/pi-coding-agent";
 /** Age gate: sessions >= 7 days old need confirmation with detail (never auto). */
 export const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * NM-05: a session holding at least this many conversation turns is never a deletion
+ * candidate for merely being unnamed. Grounded in a read-only sweep of all 75 sessions
+ * on 2026-10-07: every trivial session held 2-4 turns, all real work held 6 or more.
+ *
+ * Turns, not bytes and not lines. Bytes are inverted at the small end (7-line sessions
+ * weigh ~100 KB because the system preamble is a fixed ~90-110 KB) and lines count
+ * non-conversation entries.
+ */
+export const MIN_CONVERSATION_TURNS = 5;
+
 export const VERDICTS = {
   keep: "keep",
   paused: "paused",
@@ -118,11 +129,35 @@ export function samePath(a: string, b: string): boolean {
   }
 }
 
+/**
+ * NM-05: count conversation turns — messages whose role is `user` or `assistant`.
+ *
+ * Takes `readonly unknown[]` and narrows internally rather than importing Pi's entry
+ * type: the on-disk entry shape is Pi's, but the plugin only needs two fields, and
+ * narrowing keeps this module free of any runtime dependency on the host.
+ *
+ * Entries that do not match are skipped, never thrown on: a session file may contain a
+ * malformed line, and one bad entry must not make a session look empty.
+ */
+export function countConversationTurns(entries: readonly unknown[]): number {
+  let turns = 0;
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { type, message } = entry as { type?: unknown; message?: unknown };
+    if (type !== "message") continue;
+    if (typeof message !== "object" || message === null) continue;
+    const role = (message as { role?: unknown }).role;
+    if (role === "user" || role === "assistant") turns++;
+  }
+  return turns;
+}
+
 export function classifySession(
   s: SessionInfo,
   live: LiveIdentity,
   verdict: Verdict | undefined,
   ephemeralFlow: boolean,
+  conversationTurns: number,
 ): Classification {
   if (
     (live.path !== undefined && samePath(s.path, live.path)) ||
@@ -161,8 +196,27 @@ export function classifySession(
       verdict,
     };
   }
+  // NM-04: an explicit verdict outranks the structural checks below. Someone looked at
+  // this specific session and decided; the empty and age heuristics are guesses about a
+  // population. Accepted cost: `keep` on an empty session keeps it indefinitely, and it
+  // stays visible in the audit with its verdict.
+  if (verdict !== undefined) {
+    return { kind: CLASS_KIND.kept, reason: `has-verdict-${verdict}` };
+  }
+  // Empty needs no turn count: there is no content to preserve either way.
   if (s.messageCount === 0) {
     return { kind: CLASS_KIND.autoDeletable, reason: CANDIDATE_REASON.empty };
+  }
+  // NM-05: conversation turns floor deletion candidacy.
+  //
+  // A non-finite count means the caller could not supply one, and that must fail toward
+  // protection. TypeScript types are erased by the stripper, so a parameter that is
+  // "required" at compile time can still arrive undefined at runtime; failing open here
+  // would let a plumbing mistake make real work look like garbage.
+  const turnsKnown =
+    typeof conversationTurns === "number" && Number.isFinite(conversationTurns);
+  if (!turnsKnown || conversationTurns >= MIN_CONVERSATION_TURNS) {
+    return { kind: CLASS_KIND.kept, reason: "has-content-no-verdict" };
   }
   if (Date.now() - s.created.getTime() >= MAX_AGE_MS) {
     return {
@@ -176,9 +230,6 @@ export function classifySession(
         verdict,
       },
     };
-  }
-  if (verdict !== undefined) {
-    return { kind: CLASS_KIND.kept, reason: `has-verdict-${verdict}` };
   }
   return { kind: CLASS_KIND.kept, reason: "has-content-no-verdict" };
 }

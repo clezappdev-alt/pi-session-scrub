@@ -32,6 +32,7 @@ import {
   type VerdictData,
   type LiveIdentity,
   classifySession,
+  countConversationTurns,
   samePath,
 } from "./classify.ts";
 
@@ -335,7 +336,18 @@ async function auditSessions(ctx: ExtensionCommandContext): Promise<{
     const ephemeralFlow =
       verdict !== VERDICTS.trash &&
       matchesEphemeralFlow(userTexts(entries).join("\n"), policy.ephemeralFlows);
-    return { info, verdict, classification: classifySession(info, live, verdict, ephemeralFlow) };
+    const conversationTurns = countConversationTurns(entries);
+    return {
+      info,
+      verdict,
+      classification: classifySession(
+        info,
+        live,
+        verdict,
+        ephemeralFlow,
+        conversationTurns,
+      ),
+    };
   });
   if (
     live.id !== undefined &&
