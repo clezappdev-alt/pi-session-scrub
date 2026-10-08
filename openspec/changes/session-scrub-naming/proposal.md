@@ -103,24 +103,28 @@ noticing, which is itself an argument for stating the boundary once, here.
 - **I-7 Validate around the write.** Parse the file before writing; verify afterwards that
   it still parses and has exactly one entry more.
 
-## 5. Open questions — each anchored to its normative artifact
+## 5. Resolved at T3 — each anchored to its normative artifact
 
-These are **not** decided by this proposal. T3 resolves them.
+These were open in the first draft of this proposal and are now decided by
+`spec.md` NM-01..NM-05. They are recorded here with their anchors so the reader
+does not have to infer where each decision belongs.
 
-1. **Guard mechanism (new requirement, no anchor).** The reference script used a
-   120-second `mtime` window. The owner reserved this for the plugin, on the reasoning
-   that the plugin knows which sessions are live because it watches them close. Note the
-   measured cost: only 1 of 75 sessions is within 120 s of a write, but the common
-   workflow — close a session, then name it — lands squarely inside that window.
-2. **Bypass flag, anchored to F2.** F2 states *"No `--force` flag exists. Every
-   destructive path requires explicit per-item selection."* Naming is reversible by
-   construction (I-4), so whether it constitutes a "destructive path" under F2 is the
-   question. F2 is a fixed decision and is not silently overridden here.
-3. **Classification predicate, anchored to D2 / REQ-01.** The 7-day constant and the
-   named-is-protected rule are fixed decisions. The scan proposes replacing
-   "unnamed ⇒ cleanable" with turn-count discrimination, and supplies the population
-   distribution that any threshold must be justified against. D2 is not reopened by this
-   proposal.
+1. **Guard mechanism** (new requirement, no prior anchor) → **NM-03**. The
+   process's own live session is refused outright. For any other session a
+   file modified within 120 s is *not* treated as live: it raises the
+   confirmation requirement instead of refusing. `mtime` is a cross-process net,
+   not a claim about liveness — a session closed five seconds ago looks exactly
+   like one open in another terminal, and a block cannot separate them.
+2. **Bypass flag, anchored to F2** → **NM-03**, F2 unchanged. No `--force`
+   exists. The guard separates by cost rather than by refusal, so F2's
+   "explicit per-item selection" still governs every write. Naming is also not a
+   destructive path under F2's wording: it is an append, reversible by
+   superseding.
+3. **Classification predicate, anchored to D2 / REQ-01** → **NM-04** and
+   **NM-05**. An explicit verdict short-circuits the empty and age checks; a
+   conversation-turn floor (≥5) prevents a large unnamed session from becoming a
+   deletion candidate. Bytes are rejected as inverted at the small end; lines
+   are rejected as counting non-conversation entries.
 
 ## 6. Non-goals
 
