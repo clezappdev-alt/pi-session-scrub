@@ -2,6 +2,8 @@
 
 Keep your Pi `/resume` list clean and descriptive — without the per-session opening ceremony.
 
+> As-built behavior specification, cited to source: [`docs/behavior.md`](docs/behavior.md).
+
 ## Why
 
 The old `session-hygiene` hook injected ~400 tokens on every first turn
