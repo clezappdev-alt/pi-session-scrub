@@ -229,6 +229,12 @@ export function buildHandoffMessage(origin: HandoffOrigin): string {
   if (name !== undefined) lines.push(`Quedó como: "${name}".`);
   lines.push(`Pendiente: ${origin.next}.`);
   const memory = origin.memory;
-  if (memory?.topicKey !== undefined) lines.push(`Contexto en memoria: ${memory.topicKey}.`);
+  if (memory?.topicKey !== undefined) {
+    lines.push(`Contexto en memoria: ${memory.topicKey}.`);
+    // The title is the only summary of the block that travels with the handoff, and it is
+    // not recoverable from anywhere else. The first run ignored it, lacked a one-line
+    // account of what the previous block did, and spent three git commands rebuilding it.
+    if (memory.title !== undefined) lines.push(`Último registrado: ${memory.title}.`);
+  }
   return lines.join(" ");
 }

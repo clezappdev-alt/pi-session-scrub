@@ -346,6 +346,33 @@ test("the message carries the memory key so the agent can retrieve it", () => {
   assert.ok(!message.includes("1591"), "must not claim an id the destination cannot verify");
 });
 
+test("the message carries the memory title, the only summary that travels", () => {
+  // The title is captured from the mem_save arguments and travels in the session file, so
+  // it survives a reload. The first handoff dropped it, and the destination agent spent
+  // three git commands reconstructing what the previous block had done.
+  const message = buildHandoffMessage({
+    ...ORIGIN,
+    memory: {
+      topicKey: "session-scrub:continuity-traspaso-estado",
+      title: "slices A-C listas, falta probar el traspaso y slice D",
+    },
+  });
+  assert.ok(message.includes("slices A-C listas"));
+});
+
+test("the message does not tell the model how to look things up", () => {
+  // The topic_key is already in the message and mem_search's signature is in the tool
+  // list. Naming the tool adds no information, costs context in every later turn, and
+  // would make the plugin dictate the agent's process — which is the opposite of the
+  // design's division of labour.
+  const message = buildHandoffMessage({
+    ...ORIGIN,
+    memory: { topicKey: "session-scrub:continuity-traspaso-estado", title: "t" },
+  });
+  assert.ok(!message.includes("mem_search"));
+  assert.ok(!message.includes("mem_get_observation"));
+});
+
 test("the message separates its clauses, so nothing runs together", () => {
   const message = buildHandoffMessage({
     ...ORIGIN,
