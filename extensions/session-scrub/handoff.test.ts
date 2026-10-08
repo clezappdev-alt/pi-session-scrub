@@ -341,7 +341,20 @@ test("the message carries the memory key so the agent can retrieve it", () => {
     memory: { topicKey: "session-scrub:continuity-slice-ab", title: "t", id: 1591 },
   });
   assert.ok(message.includes("session-scrub:continuity-slice-ab"));
-  assert.ok(message.includes("1591"));
+  // The id is intentionally absent: tool results are not persisted in the session file,
+  // so it cannot survive a reload, and mem_search resolves the topic_key on its own.
+  assert.ok(!message.includes("1591"), "must not claim an id the destination cannot verify");
+});
+
+test("the message separates its clauses, so nothing runs together", () => {
+  const message = buildHandoffMessage({
+    ...ORIGIN,
+    memory: { topicKey: "session-scrub:continuity-traspaso-estado", title: "t" },
+  });
+  // The first handoff shipped "sanitización en lote Contexto en memoria" — two clauses
+  // with no terminator between them.
+  assert.ok(!/[a-z] Contexto/.test(message), `clauses ran together: ${message}`);
+  assert.ok(message.includes(`${ORIGIN.next}.`), `next step must be terminated: ${message}`);
 });
 
 test("the message still reads when there is no memory", () => {
