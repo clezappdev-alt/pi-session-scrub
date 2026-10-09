@@ -21,6 +21,7 @@ import {
   formatElapsed,
   freshnessWarning,
   findBypassAttempt,
+  resolveAssignments,
   parseAssignments,
   type AdoptionCandidate,
 } from "./adopt.ts";
@@ -328,6 +329,55 @@ test("a session_info without a name does not clear a previously seen one", () =>
 test("a session_info with a non-string name is ignored rather than trusted", () => {
   const text = [HEADER, '{"type":"session_info","name":"viejo"}', '{"type":"session_info","name":42}'].join("\n");
   assert.equal(readSnapshot(text).name, "viejo");
+});
+
+// ---------------------------------------------------------------------------
+// resolveAssignments — an ambiguous prefix must never pick a session
+// ---------------------------------------------------------------------------
+
+test("a unique prefix resolves to its one session", () => {
+  const { assignments, problems } = resolveAssignments(parseAssignments("01a1:pausa"), [
+    candidate({ id: "01a11719-aaaa" }),
+  ]);
+  assert.equal(problems.length, 0);
+  assert.equal(assignments.get("01a11719-aaaa"), STATE.pausa);
+});
+
+test("a prefix matching two sessions is refused, naming the count", () => {
+  const { assignments, problems } = resolveAssignments(parseAssignments("01a1:pausa"), [
+    candidate({ id: "01a10000-0000-0000-0000-000000000000" }),
+    candidate({ id: "01a19999-0000-0000-0000-000000000000" }),
+  ]);
+  // Picking either one would write a valid name into the wrong session file, silently.
+  assert.equal(assignments.size, 0);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0]!, /ambiguous, matches 2/);
+});
+
+test("a prefix matching nothing is refused, not silently dropped", () => {
+  const { assignments, problems } = resolveAssignments(parseAssignments("ffffff:hecho"), [
+    candidate({ id: "01a11719-aaaa" }),
+  ]);
+  assert.equal(assignments.size, 0);
+  assert.match(problems[0]!, /no session in this project matches/);
+});
+
+test("a rejected token is surfaced as a problem even when nothing else was given", () => {
+  const parsed = parseAssignments("01a1:terminado");
+  const { problems } = resolveAssignments(parsed, [candidate()]);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0]!, /unknown state/);
+});
+
+test("one ambiguous assignment does not block a resolvable one", () => {
+  const parsed = parseAssignments("01a1:pausa 01a2:hecho");
+  const { assignments, problems } = resolveAssignments(parsed, [
+    candidate({ id: "01a10000-0000-0000-0000-000000000000" }),
+    candidate({ id: "01a19999-0000-0000-0000-000000000000" }),
+    candidate({ id: "01a2aaaa-0000-0000-0000-000000000000" }),
+  ]);
+  assert.equal(problems.length, 1);
+  assert.equal(assignments.get("01a2aaaa-0000-0000-0000-000000000000"), STATE.hecho);
 });
 
 // ---------------------------------------------------------------------------

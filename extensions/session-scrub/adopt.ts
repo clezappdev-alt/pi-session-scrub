@@ -186,6 +186,40 @@ export function verifyAdoption(
 }
 
 /**
+ * Resolve inline `id:estado` prefixes against the candidate list.
+ *
+ * An abbreviation matching more than one session is refused rather than resolved to
+ * whichever happened to be listed first. Writing a state into the wrong session file
+ * is exactly the failure the whole NM-01..NM-03 guard stack exists to prevent, and it
+ * would be silent — the wrong file would gain a valid, well-formed name entry.
+ */
+export function resolveAssignments(
+  parsed: { ok: Assignment[]; rejected: RejectedAssignment[] },
+  candidates: AdoptionCandidate[],
+): { assignments: Map<string, State>; problems: string[] } {
+  const assignments = new Map<string, State>();
+  const problems: string[] = [];
+  for (const a of parsed.ok) {
+    const matches = candidates.filter((c) => c.id.startsWith(a.idPrefix));
+    if (matches.length === 0) {
+      problems.push(`Rejected ${a.idPrefix}:${a.state} — no session in this project matches.`);
+      continue;
+    }
+    if (matches.length > 1) {
+      problems.push(
+        `Rejected ${a.idPrefix}:${a.state} — ambiguous, matches ${matches.length} sessions.`,
+      );
+      continue;
+    }
+    assignments.set(matches[0]!.id, a.state);
+  }
+  for (const r of parsed.rejected) {
+    problems.push(`Rejected ${r.raw}: ${r.cause}`);
+  }
+  return { assignments, problems };
+}
+
+/**
  * Snapshot a session file from its raw JSONL text: how many entries it physically
  * holds, and the last `session_info` name in it.
  *
