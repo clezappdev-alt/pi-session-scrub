@@ -185,6 +185,50 @@ export function verifyAdoption(
   return { ok: true };
 }
 
+/**
+ * Snapshot a session file from its raw JSONL text: how many entries it physically
+ * holds, and the last `session_info` name in it.
+ *
+ * The count is physical rather than parsed, and that is the point. Pi's own entry
+ * parser skips a malformed line, so counting what it returns would under-report a file
+ * that already contains one, and it could not distinguish "gained one entry" from "was
+ * rewritten to a different length". Counting lines sees both. A malformed line still
+ * counts: writing appends a line and never rewrites the malformed one, so the file
+ * stays writable — only `name` skips what it cannot read.
+ *
+ * `parsed` means "Pi will open this file and appending is safe", not "every line is
+ * valid JSON". It mirrors Pi's own acceptance rule exactly — the first entry must be a
+ * `session` header carrying a string `id`, or `SessionManager.open` throws and refuses
+ * the file. Checking that here turns Pi's error into ours, at the point where the
+ * decision is still ours to make.
+ */
+export function readSnapshot(text: string): WriteSnapshot {
+  const lines = text.split("\n").filter((l) => l.trim().length > 0);
+  let name: string | undefined;
+  let hasHeader = false;
+  for (const [i, line] of lines.entries()) {
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (typeof value !== "object" || value === null) continue;
+    const entry = value as { type?: unknown; id?: unknown; name?: unknown };
+    // Pi validates entries[0] as the header and rejects the whole file otherwise.
+    // Note that Pi's own getEntries() then *excludes* that header, which is why this
+    // module counts physical lines rather than parsed entries.
+    if (i === 0) {
+      hasHeader = entry.type === "session" && typeof entry.id === "string";
+    }
+    if (entry.type !== "session_info") continue;
+    if (typeof entry.name === "string") name = entry.name;
+  }
+  // An empty file has no header but is still a valid target: Pi initialises it on open.
+  const parsed = lines.length === 0 || hasHeader;
+  return { entryCount: lines.length, name, parsed };
+}
+
 /** Human-readable elapsed time for the NM-03 confirmation text. */
 export function formatElapsed(seconds: number): string {
   if (seconds < 60) return `${seconds} s`;

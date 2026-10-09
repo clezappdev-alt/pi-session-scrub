@@ -8,6 +8,7 @@
 import { dirname, join, basename } from "node:path";
 import {
   renameSync,
+  copyFileSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -36,6 +37,11 @@ import {
   samePath,
 } from "./classify.ts";
 import { STATE, formatName, parseName, resolveVerdict, type State } from "./name.ts";
+import {
+  verifyAdoption,
+  readSnapshot,
+  type WriteSnapshot,
+} from "./adopt.ts";
 import {
   findLastMemoryWrite,
   planHandoffNames,
@@ -1158,24 +1164,89 @@ async function appendVerdictToOther(
   });
 }
 
-async function appendRenameToOther(
+/**
+ * Backups live in their own root, a sibling of the trash dir, never inside it.
+ *
+ * This is not tidiness. `getTrashDir` holds sessions that were *moved* there and that
+ * `/scrub-restore` lists and moves back; a backup copy sitting in that directory would
+ * be offered for restore, and restoring it over the live session would overwrite the
+ * very file the backup was taken from.
+ */
+function getBackupDir(sessionDir: string): string {
+  return join(
+    dirname(dirname(sessionDir)),
+    "session-scrub-backups",
+    basename(sessionDir),
+  );
+}
+
+/** Copy a session file aside before writing to it. Returns the backup path. */
+function backupSessionFile(sessionPath: string, backupDir: string): string {
+  mkdirSync(backupDir, { recursive: true });
+  const backupPath = join(backupDir, basename(sessionPath));
+  copyFileSync(sessionPath, backupPath);
+  return backupPath;
+}
+
+function snapshotFile(path: string): WriteSnapshot {
+  try {
+    return readSnapshot(readFileSync(path, "utf-8"));
+  } catch {
+    return { entryCount: 0, name: undefined, parsed: false };
+  }
+}
+
+interface NameWriteResult {
+  backupPath: string;
+}
+
+/**
+ * Append a name to another session's file — the single by-path write behind both
+ * `/scrub-triage` renames and `/scrub-adopt`.
+ *
+ * NM-02, in the order the spec lists it: parse the file and refuse it when it does not
+ * look like a session file, back it up, write through `appendSessionInfo` (append-only,
+ * never rewriting an entry nor computing `parentId` by hand), then re-read and require
+ * that it still parses, gained exactly one entry, and that entry carries the requested
+ * name.
+ *
+ * NM-01/NM-03 own-session refusal is re-asserted here rather than trusted from the
+ * caller: resolve ran before the human confirm, so liveness is checked again at the
+ * moment of writing.
+ */
+async function appendNameToOther(
   sessionPath: string,
-  slug: string,
+  name: string,
   livePath: string | undefined,
-): Promise<void> {
-  if (slug.trim().length === 0) {
-    throw new Error("refusing rename: empty slug");
+  backupDir: string,
+): Promise<NameWriteResult> {
+  if (name.trim().length === 0) {
+    throw new Error("refusing name write: empty name");
   }
   // Defense in depth mirroring appendVerdictToOther: resolve ran before the
   // human confirm, so re-assert liveness here — never write into a gone
   // file or the live session. Append-only; never touches message content.
   if (!existsSync(sessionPath)) {
-    throw new Error("refusing rename: session file is gone");
+    throw new Error("refusing name write: session file is gone");
   }
   if (livePath !== undefined && samePath(sessionPath, livePath)) {
-    throw new Error("refusing rename: target is the live session");
+    throw new Error("refusing name write: target is the live session");
   }
-  SessionManager.open(sessionPath).appendSessionInfo(slug);
+
+  const before = snapshotFile(sessionPath);
+  if (!before.parsed) {
+    throw new Error("refusing name write: file does not look like a session file");
+  }
+  const backupPath = backupSessionFile(sessionPath, backupDir);
+  SessionManager.open(sessionPath).appendSessionInfo(name);
+
+  // A failed post-write check is surfaced, never counted as applied. The backup path
+  // travels in the error because at that point the file on disk is the unknown one.
+  const check = verifyAdoption(before, snapshotFile(sessionPath), name);
+  if (!check.ok) {
+    throw new Error(`write did not verify: ${check.cause} (backup: ${backupPath})`);
+  }
+  return { backupPath };
 }
 
 function escapeQuote(text: string): string {
@@ -1491,6 +1562,7 @@ async function handleScrubTriagePhase2(
     return;
   }
   const livePath = ctx.sessionManager.getSessionFile();
+  const backupDir = getBackupDir(ctx.sessionManager.getSessionDir());
   let applied = 0;
   let already = 0;
   let confirmedVerdicts = 0;
@@ -1574,14 +1646,8 @@ async function handleScrubTriagePhase2(
     }
     confirmedRenames += 1;
     try {
-      await appendRenameToOther(r.targetPath, r.assignment.slug, livePath);
-      const check = SessionManager.open(r.targetPath).getSessionName();
-      if (check === r.assignment.slug) {
-        renamed += 1;
-      } else {
-        ctx.ui.notify(`Skipped ${r.shortId}: post-write re-read mismatch`, "warning");
-        renameErrored.push(r.shortId);
-      }
+      await appendNameToOther(r.targetPath, r.assignment.slug, livePath, backupDir);
+      renamed += 1;
     } catch (err) {
       ctx.ui.notify(`Skipped ${r.shortId}: ${errorMessage(err)}`, "warning");
       renameErrored.push(r.shortId);

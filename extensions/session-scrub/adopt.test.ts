@@ -17,6 +17,7 @@ import {
   isFresh,
   planAdoption,
   verifyAdoption,
+  readSnapshot,
   formatElapsed,
   parseAssignments,
   type AdoptionCandidate,
@@ -250,6 +251,81 @@ test("a bare id with no state is rejected", () => {
   const { ok, rejected } = parseAssignments("01a1");
   assert.equal(ok.length, 0);
   assert.equal(rejected.length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// readSnapshot — the parse-before / parse-after measurement (NM-02)
+// ---------------------------------------------------------------------------
+
+// Mirrors what Pi's SessionManager.open actually accepts, verified against pi 1.0.4:
+// the first entry must be a `session` header carrying a string `id`.
+const HEADER = '{"type":"session","version":3,"id":"s1","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/tmp"}';
+
+test("a snapshot counts physical lines and reads the last session name", () => {
+  const text = [
+    HEADER,
+    '{"type":"message","message":{"role":"user"}}',
+    '{"type":"session_info","name":"viejo"}',
+    '{"type":"message","message":{"role":"assistant"}}',
+  ].join("\n");
+  const snap = readSnapshot(text);
+  assert.equal(snap.parsed, true);
+  assert.equal(snap.entryCount, 4);
+  assert.equal(snap.name, "viejo");
+});
+
+test("the header counts as an entry even though Pi's own getEntries() omits it", () => {
+  // Verified against pi 1.0.4: a header-only file yields 0 parsed entries. Counting
+  // what getEntries() returns would therefore be off by one from the file on disk, and
+  // "gained exactly one entry" would silently measure the wrong quantity.
+  assert.equal(readSnapshot(HEADER).entryCount, 1);
+});
+
+test("a file whose first entry is not a session header is refused", () => {
+  // Pi throws "not a valid pi session" for exactly this shape, leaving the file
+  // untouched. Detecting it here reports it as ours, before the write is attempted.
+  const text = '{"type":"message","message":{"role":"user"}}';
+  assert.equal(readSnapshot(text).parsed, false);
+});
+
+test("a session header without a string id is refused", () => {
+  assert.equal(readSnapshot('{"type":"session","version":3}').parsed, false);
+});
+
+test("a malformed first line is refused", () => {
+  assert.equal(readSnapshot('{not json\n{"type":"session_info","name":"x"}').parsed, false);
+});
+
+test("a malformed line after the header still counts as an entry and keeps the name", () => {
+  // The count is physical on purpose: Pi skips a malformed line, so counting parsed
+  // entries would under-report a file that already contains one. What must survive is
+  // the ability to write at all — appending never rewrites the malformed line.
+  const text = [HEADER, '{not json at all', '{"type":"session_info","name":"viejo"}'].join("\n");
+  const snap = readSnapshot(text);
+  assert.equal(snap.entryCount, 3);
+  assert.equal(snap.name, "viejo");
+  assert.equal(snap.parsed, true);
+});
+
+test("an empty file is a zero-entry snapshot, not a parse failure", () => {
+  const snap = readSnapshot("");
+  assert.equal(snap.entryCount, 0);
+  assert.equal(snap.name, undefined);
+  assert.equal(snap.parsed, true);
+});
+
+test("a file with no session_info reports no name", () => {
+  assert.equal(readSnapshot([HEADER, '{"type":"message","message":{"role":"user"}}'].join("\n")).name, undefined);
+});
+
+test("a session_info without a name does not clear a previously seen one", () => {
+  const text = [HEADER, '{"type":"session_info","name":"viejo"}', '{"type":"session_info"}'].join("\n");
+  assert.equal(readSnapshot(text).name, "viejo");
+});
+
+test("a session_info with a non-string name is ignored rather than trusted", () => {
+  const text = [HEADER, '{"type":"session_info","name":"viejo"}', '{"type":"session_info","name":42}'].join("\n");
+  assert.equal(readSnapshot(text).name, "viejo");
 });
 
 // ---------------------------------------------------------------------------
