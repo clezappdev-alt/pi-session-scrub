@@ -1687,7 +1687,12 @@ export default function (pi: ExtensionAPI): void {
       "text is read by a human scanning /resume, so: the NEXT step in plain words, " +
       "not what you implemented, not symbol names, not an API call. One glanceable line. " +
       "If a state word would contradict the text — a 'pausa:' whose text says the work " +
-      "moves elsewhere — pick the state that matches, because they are mutually exclusive.",
+      "moves elsewhere — pick the state that matches, because they are mutually exclusive. " +
+      "The closing memory's title should state the BLOCK's state — what is built, what is " +
+      "verified, what is next — not the finding that prompted it. That title travels " +
+      "verbatim in the handoff, and measured across three runs it is the difference " +
+      "between the next session dumping the whole project and finding the context in one " +
+      "search. A title that describes a discovery instead of a state works against it.",
     parameters: ScrubCloseParams,
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       return handleScrubClose(pi, params);
