@@ -1730,6 +1730,9 @@ async function handleScrubTriagePhase2(
 // /scrub-adopt — slice D, bulk sanitization
 // ---------------------------------------------------------------------------
 
+/** The five states, for the syntax reminder. Listed, never pre-chosen. */
+const STATE_VALUES_HINT = Object.values(STATE).join("|");
+
 /** Every session under this cwd, not the triage subset.
  *
  * Adoption deliberately does not reuse `gatherTriageCandidates`: that one filters by
@@ -1822,9 +1825,12 @@ async function handleScrubAdopt(args: string, ctx: ExtensionCommandContext): Pro
       for (const n of needsState) {
         lines.push(`  ${shortId(n.id)}  ${nameOf(n.id)}`);
       }
-      lines.push(
-        `  assign inline: /scrub-adopt --apply ${needsState.map((n) => `${shortId(n.id)}:pausa`).join(" ")}`,
-      );
+      // A syntax reminder, never a filled-in batch. Emitting one ready-to-paste line
+      // with a state per session would hand the human eleven `pausa:` suggestions it
+      // did not ask for and cannot justify — inventing the state by proxy is the same
+      // failure as inventing it outright, and a bulk line is the form most likely to be
+      // pasted without reading.
+      lines.push(`  assign inline: /scrub-adopt --apply <id>:${STATE_VALUES_HINT} […]`);
     }
     if (textless.length > 0) {
       lines.push(
