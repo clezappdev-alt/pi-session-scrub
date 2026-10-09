@@ -229,6 +229,53 @@ export function readSnapshot(text: string): WriteSnapshot {
   return { entryCount: lines.length, name, parsed };
 }
 
+/**
+ * The extra text a target inside the freshness window requires before it is written.
+ *
+ * NM-03 requires three things in the confirmation and they travel together on
+ * purpose: the elapsed time, the fact that writing over a live session can interleave
+ * with Pi's own flush, and where the backup will be. A confirmation that raised the bar
+ * without naming the way back would be cost without control.
+ *
+ * Returns "" for a settled target so callers can concatenate unconditionally rather
+ * than branch on whether the warning applies.
+ */
+export function freshnessWarning(
+  fresh: boolean,
+  ageSeconds: number,
+  backupPath: string,
+): string {
+  if (!fresh) return "";
+  return (
+    `written ${formatElapsed(ageSeconds)} ago — if that session is live in another ` +
+    `terminal, this write can interleave with Pi's own flush. ` +
+    `backup: ${backupPath}. There is no flag to skip this; waiting is the only bypass.`
+  );
+}
+
+/** Flag-shaped arguments that would be read as a way to skip the guard. */
+const BYPASS_FLAGS = new Set(["--force", "-f", "--yes", "-y", "--skip-guard", "--no-confirm"]);
+
+/**
+ * NM-03: no `--force` or equivalent bypass exists, and F2 stays intact.
+ *
+ * Detecting the attempt matters more than ignoring it. An unrecognised flag would
+ * otherwise fall through to the session-search text, and the user would be told no
+ * sessions matched — an answer that looks like a bug in the command rather than a
+ * refusal. Naming it as a refusal is the honest answer, and it survives someone later
+ * adding flags without them ever acquiring skip semantics.
+ */
+export function findBypassAttempt(args: string): string | undefined {
+  for (const token of args.split(/\s+/)) {
+    const flag = token.toLowerCase();
+    if (BYPASS_FLAGS.has(flag)) return token;
+    // Also catch the `--force=true` and `--force:x` spellings a flag parser accepts.
+    const eq = flag.indexOf("=");
+    if (eq > 0 && BYPASS_FLAGS.has(flag.slice(0, eq))) return token;
+  }
+  return undefined;
+}
+
 /** Human-readable elapsed time for the NM-03 confirmation text. */
 export function formatElapsed(seconds: number): string {
   if (seconds < 60) return `${seconds} s`;

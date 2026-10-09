@@ -9,6 +9,7 @@ import { dirname, join, basename } from "node:path";
 import {
   renameSync,
   copyFileSync,
+  statSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -40,6 +41,9 @@ import { STATE, formatName, parseName, resolveVerdict, type State } from "./name
 import {
   verifyAdoption,
   readSnapshot,
+  isFresh,
+  freshnessWarning,
+  findBypassAttempt,
   type WriteSnapshot,
 } from "./adopt.ts";
 import {
@@ -1188,6 +1192,38 @@ function backupSessionFile(sessionPath: string, backupDir: string): string {
   return backupPath;
 }
 
+/**
+ * Where the backup for this target will land — computed without writing, so the
+ * confirmation can name it before the human is asked to accept the write.
+ */
+function backupPathFor(sessionPath: string, backupDir: string): string {
+  return join(backupDir, basename(sessionPath));
+}
+
+/**
+ * NM-03's cross-process net: how long ago the file was last written, and whether that
+ * puts it inside the freshness window.
+ *
+ * Sampled before any write and treated as evidence about *other processes*, never as a
+ * claim of liveness. A missing or unreadable mtime reads as settled rather than fresh:
+ * `statSync` failing means the file is already gone, and `appendNameToOther` refuses
+ * that case outright anyway — the guard must not be the thing that reports it.
+ */
+function freshnessOf(sessionPath: string, now: number = Date.now()): {
+  fresh: boolean;
+  ageSeconds: number;
+} {
+  try {
+    const mtimeMs = statSync(sessionPath).mtimeMs;
+    return {
+      fresh: isFresh(mtimeMs, now),
+      ageSeconds: Math.max(0, Math.round((now - mtimeMs) / 1000)),
+    };
+  } catch {
+    return { fresh: false, ageSeconds: Number.MAX_SAFE_INTEGER };
+  }
+}
+
 function snapshotFile(path: string): WriteSnapshot {
   try {
     return readSnapshot(readFileSync(path, "utf-8"));
@@ -1636,9 +1672,25 @@ async function handleScrubTriagePhase2(
   const renameErrored: string[] = [];
   for (const r of resolvedRenames) {
     const { msgs, ageDays } = ageOf(r.targetPath);
+    // NM-03: sampled here, before the confirm and before any write touches the file.
+    // A target inside the window is not refused — refusing cannot separate a session
+    // closed five seconds ago from one open in another terminal — so it raises the bar
+    // instead, and only for the targets where the risk actually lives.
+    const fresh = freshnessOf(r.targetPath);
+    const warning = freshnessWarning(
+      fresh.fresh,
+      fresh.ageSeconds,
+      backupPathFor(r.targetPath, backupDir),
+    );
     const ok = await ctx.ui.confirm(
       `Rename ${r.shortId} to "${r.assignment.slug}"?`,
-      `existing="${r.existingName ?? "(unnamed)"}" → proposed="${r.assignment.slug}" · msgs=${msgs} · age=${ageDays}d`,
+      [
+        `existing="${r.existingName ?? "(unnamed)"}" → proposed="${r.assignment.slug}"`,
+        `msgs=${msgs} · age=${ageDays}d`,
+        warning,
+      ]
+        .filter((s) => s.length > 0)
+        .join("\n"),
     );
     if (!ok) {
       renameDeclined.push(r.shortId);
@@ -1670,6 +1722,18 @@ async function handleScrubTriagePhase2(
 }
 
 async function handleScrubTriage(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  // NM-03 offers no bypass. Refusing the flag by name beats letting it fall through
+  // to the session-search text, where it would be reported as "no sessions matched" —
+  // an answer that reads like a bug rather than a refusal.
+  const bypass = findBypassAttempt(args);
+  if (bypass !== undefined) {
+    ctx.ui.notify(
+      `${bypass} is not a bypass flag; no such flag exists. A session written within ` +
+        "the last 2 minutes is confirmed, not skipped — waiting is the only bypass.",
+      "warning",
+    );
+    return;
+  }
   if (!args.includes("--apply")) {
     const verbose = args.split(/\s+/).includes("--verbose");
     await handleScrubTriagePhase1(ctx, verbose);

@@ -19,6 +19,8 @@ import {
   verifyAdoption,
   readSnapshot,
   formatElapsed,
+  freshnessWarning,
+  findBypassAttempt,
   parseAssignments,
   type AdoptionCandidate,
 } from "./adopt.ts";
@@ -335,4 +337,45 @@ test("a session_info with a non-string name is ignored rather than trusted", () 
 test("elapsed time reads in seconds, then minutes", () => {
   assert.equal(formatElapsed(8), "8 s");
   assert.equal(formatElapsed(119), "1 min 59 s");
+});
+
+// ---------------------------------------------------------------------------
+// freshnessWarning — what NM-03 requires the confirmation to state
+// ---------------------------------------------------------------------------
+
+test("the fresh-mtime warning states the elapsed time", () => {
+  assert.match(freshnessWarning(true, 8, "/backups/x.jsonl"), /8 s/);
+});
+
+test("the fresh-mtime warning names the backup location", () => {
+  // The human cannot assess a write they cannot undo, so the way back has to be in
+  // the same breath as the risk.
+  assert.match(freshnessWarning(true, 8, "/backups/x.jsonl"), /\/backups\/x\.jsonl/);
+});
+
+test("the fresh-mtime warning explains why mtime is not a block", () => {
+  const w = freshnessWarning(true, 8, "/backups/x.jsonl");
+  assert.match(w, /flush/);
+  assert.match(w, /wait/i);
+});
+
+test("a settled file gets no warning at all", () => {
+  assert.equal(freshnessWarning(false, 900, "/backups/x.jsonl"), "");
+});
+
+// ---------------------------------------------------------------------------
+// findBypassAttempt — NM-03 forbids any flag that skips the warning
+// ---------------------------------------------------------------------------
+
+test("a force flag is recognised as a bypass attempt", () => {
+  for (const arg of ["--force", "-f", "--yes", "--skip-guard"]) {
+    assert.equal(findBypassAttempt(arg), arg, `expected ${arg} to be detected`);
+  }
+});
+
+test("an ordinary flag is not mistaken for a bypass attempt", () => {
+  assert.equal(findBypassAttempt("--apply"), undefined);
+  assert.equal(findBypassAttempt("--dry-run"), undefined);
+  assert.equal(findBypassAttempt("01a1:pausa"), undefined);
+  assert.equal(findBypassAttempt(""), undefined);
 });
