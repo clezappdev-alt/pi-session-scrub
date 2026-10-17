@@ -256,6 +256,30 @@ test("a bare id with no state is rejected", () => {
   assert.equal(rejected.length, 1);
 });
 
+test("a flag is not a malformed assignment", () => {
+  // Found by running the command for real: `/scrub-adopt --apply 01a0aabb:pausa`
+  // answered "Rejected --apply: not an id:estado assignment". Flags belong to the
+  // caller, and rejecting them warns on every legitimate invocation. Triage had been
+  // stripping them first; adopt was not.
+  const { ok, rejected } = parseAssignments("--apply");
+  assert.equal(ok.length, 0);
+  assert.equal(rejected.length, 0);
+});
+
+test("a flag beside a real assignment does not disturb it", () => {
+  const { ok, rejected } = parseAssignments("--apply 01a1:pausa");
+  assert.deepEqual(ok, [{ idPrefix: "01a1", state: STATE.pausa }]);
+  assert.equal(rejected.length, 0);
+});
+
+test("a malformed id is still rejected even when a flag is present", () => {
+  // The flag must not become a blanket exemption.
+  const { ok, rejected } = parseAssignments("--apply 01a1");
+  assert.equal(ok.length, 0);
+  assert.equal(rejected.length, 1);
+  assert.match(rejected[0]!.raw, /01a1/);
+});
+
 // ---------------------------------------------------------------------------
 // readSnapshot — the parse-before / parse-after measurement (NM-02)
 // ---------------------------------------------------------------------------
