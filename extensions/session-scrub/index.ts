@@ -60,6 +60,7 @@ import {
   planHandoffNames,
   buildHandoffMessage,
 } from "./handoff.ts";
+import { uniqueAbbreviations, abbrevOf, idFromFilename } from "./ids.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -110,6 +111,9 @@ interface AuditedSession {
   info: SessionInfo;
   verdict?: Verdict;
   classification: Classification;
+  // Derived from the full project id set (see auditSessions): uuid v7 bursts
+  // agree past eight chars, so a fixed slice cannot separate sessions.
+  shortId: string;
 }
 
 interface AuditSummary {
@@ -199,7 +203,7 @@ function resolveDryRun(args: string, ctx: { mode: string; hasUI: boolean }): boo
 }
 
 function formatAuditLine(a: AuditedSession): string {
-  const short = a.info.id.slice(0, 8);
+  const short = a.shortId;
   switch (a.classification.kind) {
     case CLASS_KIND.live:
       return a.info.path === ""
@@ -342,6 +346,15 @@ async function auditSessions(ctx: ExtensionCommandContext): Promise<{
     id: ctx.sessionManager.getSessionId(),
   };
   const sessions = await SessionManager.list(ctx.cwd);
+  // Abbreviations come from every session in the project plus the live one (which may
+  // not be on disk yet). Derived from the full set, never a filtered subset, so the
+  // same session shows the same prefix in every command: uuid v7 sessions created in
+  // a burst agree past eight characters, and a width derived per subset would make
+  // the listings mutually unreadable.
+  const abbrevs = uniqueAbbreviations([
+    ...sessions.map((info) => info.id),
+    ...(live.id !== undefined ? [live.id] : []),
+  ]);
   const audited: AuditedSession[] = sessions.map((info) => {
     const isLive =
       (live.path !== undefined && samePath(info.path, live.path)) ||
@@ -359,6 +372,7 @@ async function auditSessions(ctx: ExtensionCommandContext): Promise<{
     return {
       info,
       verdict,
+      shortId: abbrevOf(abbrevs, info.id),
       classification: classifySession(
         info,
         live,
@@ -389,6 +403,7 @@ async function auditSessions(ctx: ExtensionCommandContext): Promise<{
     audited.unshift({
       info: liveInfo,
       verdict: readLatestVerdict(liveEntries),
+      shortId: abbrevOf(abbrevs, liveInfo.id),
       classification: { kind: CLASS_KIND.live },
     });
   }
@@ -453,7 +468,7 @@ async function handleScrubApply(args: string, ctx: ExtensionCommandContext): Pro
         ? ` first="${a.classification.detail.firstMessage.slice(0, 80)}" modified=${a.classification.detail.modified.toISOString()}`
         : "";
     const ok = await ctx.ui.confirm(
-      `Trash session ${a.info.id.slice(0, 8)}?`,
+      `Trash session ${a.shortId}?`,
       `${formatAuditLine(a)}${detail} Move is reversible via /scrub-restore.`,
     );
     if (!ok) continue;
@@ -461,7 +476,7 @@ async function handleScrubApply(args: string, ctx: ExtensionCommandContext): Pro
       moveToTrash(a.info.path, trashDir);
       trashed += 1;
     } catch (err) {
-      ctx.ui.notify(`Skipped ${a.info.id.slice(0, 8)}: ${errorMessage(err)}`, "warning");
+      ctx.ui.notify(`Skipped ${a.shortId}: ${errorMessage(err)}`, "warning");
     }
   }
   const relisted = await SessionManager.list(ctx.cwd);
@@ -483,11 +498,17 @@ async function handleScrubRestore(args: string, ctx: ExtensionCommandContext): P
     );
     return;
   }
+  // The filename is `<timestamp>_<uuid>.jsonl`, so taking the first eight characters of
+  // the basename yields the **date**: every session trashed the same day rendered as
+  // `2026-10-`, and the prompt asking whether to restore a file could not say which one.
+  // The id follows the separator, and the width is derived from the trash set so two
+  // sessions from a burst stay distinguishable.
+  const restoreAbbrev = uniqueAbbreviations(trashed.map(idFromFilename));
   let restored = 0;
   for (const p of trashed) {
     const ok = await ctx.ui.confirm(
-      `Restore session ${basename(p, ".jsonl").slice(0, 8)}?`,
-      "Moves the session file back so /resume shows it again.",
+      `Restore session ${abbrevOf(restoreAbbrev, idFromFilename(p))}?`,
+      `Moves ${basename(p)} back so /resume shows it again.`,
     );
     if (!ok) continue;
     try {
@@ -1304,6 +1325,7 @@ async function gatherTriageCandidates(ctx: ExtensionCommandContext): Promise<{
   candidates: TriageCandidate[];
   emptySkipped: number;
   ephemeralSkipped: number;
+  abbrevs: Map<string, string>;
 }> {
   const policy = readPolicyConfig(ctx.cwd);
   const live: LiveIdentity = {
@@ -1311,6 +1333,11 @@ async function gatherTriageCandidates(ctx: ExtensionCommandContext): Promise<{
     id: ctx.sessionManager.getSessionId(),
   };
   const sessions = await SessionManager.list(ctx.cwd);
+  // Full id set, before any filtering: the digest packs, the deferred line and the
+  // --apply resolutions must all print the same prefix for the same session, and a
+  // subset-derived width would make the triage phases disagree with each other and
+  // with the other commands.
+  const abbrevs = uniqueAbbreviations(sessions.map((info) => info.id));
   const candidates: TriageCandidate[] = [];
   let emptySkipped = 0;
   let ephemeralSkipped = 0;
@@ -1340,15 +1367,11 @@ async function gatherTriageCandidates(ctx: ExtensionCommandContext): Promise<{
     if (aNamed !== bNamed) return aNamed - bNamed;
     return a.info.modified.getTime() - b.info.modified.getTime();
   });
-  return { candidates, emptySkipped, ephemeralSkipped };
-}
-
-function shortId(id: string): string {
-  return id.slice(0, 8);
+  return { candidates, emptySkipped, ephemeralSkipped, abbrevs };
 }
 
 async function handleScrubTriagePhase1(ctx: ExtensionCommandContext, verbose: boolean): Promise<void> {
-  const { candidates, emptySkipped, ephemeralSkipped } = await gatherTriageCandidates(ctx);
+  const { candidates, emptySkipped, ephemeralSkipped, abbrevs } = await gatherTriageCandidates(ctx);
   if (candidates.length === 0) {
     ctx.ui.notify(
       `Nothing to triage. (${emptySkipped} empty skipped, ${ephemeralSkipped} ephemeral already candidates.)`,
@@ -1366,7 +1389,7 @@ async function handleScrubTriagePhase1(ctx: ExtensionCommandContext, verbose: bo
   const packOf = (c: TriageCandidate): DigestPack =>
     buildDigestPack(
       {
-        shortId: shortId(c.info.id),
+        shortId: abbrevOf(abbrevs, c.info.id),
         messageCount: c.info.messageCount,
         created: c.info.created,
         modified: c.info.modified,
@@ -1378,7 +1401,7 @@ async function handleScrubTriagePhase1(ctx: ExtensionCommandContext, verbose: bo
     );
   const guessOf = (c: TriageCandidate): WeakGuess =>
     suggestTriageWeak({
-      shortId: shortId(c.info.id),
+      shortId: abbrevOf(abbrevs, c.info.id),
       messageCount: c.info.messageCount,
       ageMs: Date.now() - c.info.created.getTime(),
       maxAgeMs: MAX_AGE_MS,
@@ -1418,7 +1441,7 @@ async function handleScrubTriagePhase1(ctx: ExtensionCommandContext, verbose: bo
     }
   }
   if (deferred.length > 0) {
-    lines.push(`deferred (${deferred.length}): ${deferred.map((c) => shortId(c.info.id)).join(", ")}`);
+    lines.push(`deferred (${deferred.length}): ${deferred.map((c) => abbrevOf(abbrevs, c.info.id)).join(", ")}`);
   }
   lines.push('Packs are quoted-as-data: judge the words, then approve in chat with /scrub-triage --apply id:verdict:"reason" [...] (machine keeps accept bare id:keep; renames as id:name:"slug"); --verbose shows full packs; --dry-run previews; nothing is written by this command.');
   ctx.ui.notify(lines.join("\n"), "info");
@@ -1438,7 +1461,7 @@ async function handleScrubTriagePhase2(
   for (const r of renameRejected) {
     ctx.ui.notify(`Rejected ${r.raw}: ${r.cause}`, "warning");
   }
-  const { candidates } = await gatherTriageCandidates(ctx);
+  const { candidates, abbrevs } = await gatherTriageCandidates(ctx);
   const byPath = new Map<string, TriageCandidate>(candidates.map((c) => [c.info.path, c]));
   const ageOf = (targetPath: string): { msgs: number; ageDays: number } => {
     const info = byPath.get(targetPath);
@@ -1482,7 +1505,7 @@ async function handleScrubTriagePhase2(
     resolved.push({
       assignment: a,
       targetPath: target.info.path,
-      shortId: shortId(target.info.id),
+      shortId: abbrevOf(abbrevs, target.info.id),
       provenance: named ? TRIAGE_GRADE.MACHINE : TRIAGE_GRADE.WEAK,
     });
   }
@@ -1502,7 +1525,7 @@ async function handleScrubTriagePhase2(
     resolvedRenames.push({
       assignment: a,
       targetPath: target.info.path,
-      shortId: shortId(target.info.id),
+      shortId: abbrevOf(abbrevs, target.info.id),
       existingName: existing !== undefined && existing.length > 0 ? existing : undefined,
     });
   }
@@ -1727,6 +1750,10 @@ async function handleScrubAdopt(args: string, ctx: ExtensionCommandContext): Pro
   const backupDir = getBackupDir(ctx.sessionManager.getSessionDir());
   const livePath = ctx.sessionManager.getSessionFile();
   const all = await gatherAdoptionCandidates(ctx);
+  // Same invariant as the other commands: derive widths from every session in the
+  // project (candidate or not), so a prefix shown in dry-run, confirms and results
+  // stays cross-referenceable with /scrub and /scrub-triage output.
+  const abbrevs = uniqueAbbreviations(all.map((c) => c.id));
 
   // The live session is never a target here: NM-03 refuses it outright, and naming it
   // through the plugin's own tool is what `scrub_close` is for. It is reported, not
@@ -1756,12 +1783,12 @@ async function handleScrubAdopt(args: string, ctx: ExtensionCommandContext): Pro
     ];
     for (const w of writes) {
       const arrow = w.derived ? "verdict" : "your assignment";
-      lines.push(`  ${shortId(w.id)}  ${nameOf(w.id)} → ${w.name}  (${arrow})`);
+      lines.push(`  ${abbrevOf(abbrevs, w.id)}  ${nameOf(w.id)} → ${w.name}  (${arrow})`);
     }
     if (needsState.length > 0) {
       lines.push(`needs a state from you (${needsState.length}) — nothing was invented for these:`);
       for (const n of needsState) {
-        lines.push(`  ${shortId(n.id)}  ${nameOf(n.id)}`);
+        lines.push(`  ${abbrevOf(abbrevs, n.id)}  ${nameOf(n.id)}`);
       }
       // A syntax reminder, never a filled-in batch. Emitting one ready-to-paste line
       // with a state per session would hand the human eleven `pausa:` suggestions it
@@ -1773,7 +1800,7 @@ async function handleScrubAdopt(args: string, ctx: ExtensionCommandContext): Pro
     if (textless.length > 0) {
       lines.push(
         `no readable text after the prefix (${textless.length}): ${textless
-          .map((t) => shortId(t.id))
+          .map((t) => abbrevOf(abbrevs, t.id))
           .join(", ")} — /name them with words if you want them legible in /resume`,
       );
     }
@@ -1804,7 +1831,7 @@ async function handleScrubAdopt(args: string, ctx: ExtensionCommandContext): Pro
     const ok = await ctx.ui.confirm(
       `Adopt ${settledWrites.length} session${settledWrites.length === 1 ? "" : "s"}?`,
       [
-        settledWrites.map((w) => `  ${shortId(w.id)} → ${w.name}`).join("\n"),
+        settledWrites.map((w) => `  ${abbrevOf(abbrevs, w.id)} → ${w.name}`).join("\n"),
         `Backups go to ${backupDir}`,
       ].join("\n"),
     );
@@ -1812,7 +1839,7 @@ async function handleScrubAdopt(args: string, ctx: ExtensionCommandContext): Pro
   }
   for (const w of freshWrites) {
     const ok = await ctx.ui.confirm(
-      `Adopt ${shortId(w.id)} → "${w.name}"?`,
+      `Adopt ${abbrevOf(abbrevs, w.id)} → "${w.name}"?`,
       [
         `${nameOf(w.id)} → ${w.name}`,
         freshnessWarning(true, w.ageSeconds, backupPathFor(w.path, backupDir)),
@@ -1828,15 +1855,15 @@ async function handleScrubAdopt(args: string, ctx: ExtensionCommandContext): Pro
   const errored: string[] = [];
   for (const w of writes) {
     if (!accepted.has(w.id)) {
-      declined.push(shortId(w.id));
+      declined.push(abbrevOf(abbrevs, w.id));
       continue;
     }
     try {
       await appendNameToOther(w.path, w.name!, livePath, backupDir);
       adoptedCount += 1;
     } catch (err) {
-      ctx.ui.notify(`Skipped ${shortId(w.id)}: ${errorMessage(err)}`, "warning");
-      errored.push(shortId(w.id));
+      ctx.ui.notify(`Skipped ${abbrevOf(abbrevs, w.id)}: ${errorMessage(err)}`, "warning");
+      errored.push(abbrevOf(abbrevs, w.id));
     }
   }
 
