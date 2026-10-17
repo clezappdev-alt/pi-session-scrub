@@ -1351,7 +1351,15 @@ async function gatherTriageCandidates(ctx: ExtensionCommandContext): Promise<{
       (live.id !== undefined && info.id === live.id);
     if (isLive) continue;
     const entries = openSessionEntries(info.path);
-    if (readLatestVerdict(entries) !== undefined) continue;
+    // Resolved, not raw. A name carrying a state prefix IS that session's verdict — the
+    // single carrier — so a session named `hecho:` is not verdict-less and has no business
+    // being offered for a verdict it already derives. Reading the entry raw made triage
+    // offer sessions that /scrub had just shown as named-protected: 7 of 52 in a real
+    // project, every one of them already declaring its state.
+    //
+    // Cost, accepted: those sessions lose triage's rename path. The name is written by a
+    // human through /name or Ctrl+R, which is what the design says anyway.
+    if (resolveVerdict(info.name ?? "", readLatestVerdict(entries)) !== undefined) continue;
     if (info.messageCount === 0) {
       emptySkipped += 1;
       continue;
