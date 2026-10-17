@@ -5,10 +5,9 @@
 // destructive deletion), live session never touched, silent close (no shutdown handler
 // handler registered — the absence is intentional, spec T9).
 
-import { dirname, join, basename } from "node:path";
+import { join, basename } from "node:path";
 import {
   renameSync,
-  copyFileSync,
   statSync,
   mkdirSync,
   readdirSync,
@@ -40,17 +39,22 @@ import {
 import { STATE, formatName, parseName, resolveVerdict, type State } from "./name.ts";
 import {
   verifyAdoption,
-  readSnapshot,
-  isFresh,
   freshnessWarning,
   findBypassAttempt,
   planAdoption,
   parseAssignments,
   resolveAssignments,
-  type WriteSnapshot,
   type AdoptionCandidate,
   type AdoptionPlan,
 } from "./adopt.ts";
+import {
+  getTrashDir,
+  getBackupDir,
+  backupPathFor,
+  backupSessionFile,
+  snapshotFile,
+  freshnessOf,
+} from "./sessionfs.ts";
 import {
   findLastMemoryWrite,
   planHandoffNames,
@@ -290,16 +294,8 @@ function readPolicyConfig(cwd: string): PolicyConfig {
 // FS helpers (throwing atomic moves; callers catch per file)
 // ---------------------------------------------------------------------------
 
-/** Trash dir as sibling of Pi's `sessions/` root (two levels up from the
- * per-project dir) — never an invented transform, and never inside
- * `sessions/` where Pi could mistake trashed files for live sessions. */
-function getTrashDir(sessionDir: string): string {
-  return join(
-    dirname(dirname(sessionDir)),
-    "session-scrub-trash",
-    basename(sessionDir),
-  );
-}
+// `getTrashDir` lives in sessionfs.ts now, beside `getBackupDir`, so the invariant that
+// keeps backups out of the trash directory is visible where both are defined and testable.
 
 function moveToTrash(sessionPath: string, trashDir: string): string {
   mkdirSync(trashDir, { recursive: true });
@@ -1174,68 +1170,10 @@ async function appendVerdictToOther(
 }
 
 /**
- * Backups live in their own root, a sibling of the trash dir, never inside it.
- *
- * This is not tidiness. `getTrashDir` holds sessions that were *moved* there and that
- * `/scrub-restore` lists and moves back; a backup copy sitting in that directory would
- * be offered for restore, and restoring it over the live session would overwrite the
- * very file the backup was taken from.
+ * The write path now lives in `sessionfs.ts`, where it is testable: this file imports
+ * it and owns only the wiring. Extracted for the same reason `classify.ts` was — the
+ * ordering that makes a write into another session's file recoverable had no test.
  */
-function getBackupDir(sessionDir: string): string {
-  return join(
-    dirname(dirname(sessionDir)),
-    "session-scrub-backups",
-    basename(sessionDir),
-  );
-}
-
-/** Copy a session file aside before writing to it. Returns the backup path. */
-function backupSessionFile(sessionPath: string, backupDir: string): string {
-  mkdirSync(backupDir, { recursive: true });
-  const backupPath = join(backupDir, basename(sessionPath));
-  copyFileSync(sessionPath, backupPath);
-  return backupPath;
-}
-
-/**
- * Where the backup for this target will land — computed without writing, so the
- * confirmation can name it before the human is asked to accept the write.
- */
-function backupPathFor(sessionPath: string, backupDir: string): string {
-  return join(backupDir, basename(sessionPath));
-}
-
-/**
- * NM-03's cross-process net: how long ago the file was last written, and whether that
- * puts it inside the freshness window.
- *
- * Sampled before any write and treated as evidence about *other processes*, never as a
- * claim of liveness. A missing or unreadable mtime reads as settled rather than fresh:
- * `statSync` failing means the file is already gone, and `appendNameToOther` refuses
- * that case outright anyway — the guard must not be the thing that reports it.
- */
-function freshnessOf(sessionPath: string, now: number = Date.now()): {
-  fresh: boolean;
-  ageSeconds: number;
-} {
-  try {
-    const mtimeMs = statSync(sessionPath).mtimeMs;
-    return {
-      fresh: isFresh(mtimeMs, now),
-      ageSeconds: Math.max(0, Math.round((now - mtimeMs) / 1000)),
-    };
-  } catch {
-    return { fresh: false, ageSeconds: Number.MAX_SAFE_INTEGER };
-  }
-}
-
-function snapshotFile(path: string): WriteSnapshot {
-  try {
-    return readSnapshot(readFileSync(path, "utf-8"));
-  } catch {
-    return { entryCount: 0, name: undefined, parsed: false };
-  }
-}
 
 interface NameWriteResult {
   backupPath: string;
