@@ -402,7 +402,11 @@ async function auditSessions(ctx: ExtensionCommandContext): Promise<{
     };
     audited.unshift({
       info: liveInfo,
-      verdict: readLatestVerdict(liveEntries),
+      // Resolved like every other row. This one is displayed in /scrub beside rows that
+      // read their verdict through `resolveVerdict`, so reading the entry raw here let
+      // the live session show a verdict its own name contradicts — the one row in the
+      // listing that could disagree with itself.
+      verdict: resolveVerdict(liveInfo.name ?? "", readLatestVerdict(liveEntries)),
       shortId: abbrevOf(abbrevs, liveInfo.id),
       classification: { kind: CLASS_KIND.live },
     });
