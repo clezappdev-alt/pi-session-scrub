@@ -1986,6 +1986,10 @@ export default function (pi: ExtensionAPI): void {
       "state: pausa (here, next step known), abierto (here, unknown), " +
       "espera (blocked elsewhere), traspaso (continues in another session), " +
       "hecho (finished). " +
+      "traspaso commits you to more than a name: tell the user to run /scrub-handoff, " +
+      "because that command is what actually creates the continuation and only they can " +
+      "run it. A traspaso with no handoff leaves /resume promising a continuation that " +
+      "never existed, which is worse than no name because it is trusted. " +
       "text is read by a human scanning /resume, so: the NEXT step in plain words, " +
       "not what you implemented, not symbol names, not an API call. One glanceable line. " +
       "If a state word would contradict the text — a 'pausa:' whose text says the work " +
