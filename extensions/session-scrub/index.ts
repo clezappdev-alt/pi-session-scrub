@@ -36,6 +36,11 @@ import {
   samePath,
 } from "./classify.ts";
 import { STATE, formatName, parseName, resolveVerdict, type State } from "./name.ts";
+import {
+  findLastMemoryWrite,
+  planHandoffNames,
+  buildHandoffMessage,
+} from "./handoff.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -589,6 +594,89 @@ function handleScrubClose(
     return toolResult(`Could not set the session name: ${errorMessage(err)}`);
   }
   return toolResult(`Session name set: ${name}`);
+}
+
+const HANDOFF_CUSTOM_TYPE = "session-scrub/handoff";
+
+/**
+ * `/scrub-handoff` — create the continuation this session promised, and start it with
+ * the origin, the next step and the memory key.
+ *
+ * A command rather than a tool, and not by preference: `ctx.newSession` exists only on
+ * ExtensionCommandContext. A tool receives ExtensionToolContext, which cannot create a
+ * session. That is the right shape anyway — creating a session is deliberate and visible,
+ * so a human should type it rather than have it fire mid-turn.
+ */
+async function handleScrubHandoff(
+  pi: ExtensionAPI,
+  args: string,
+  ctx: ExtensionCommandContext,
+): Promise<void> {
+  const originId = ctx.sessionManager.getSessionId();
+  const originName = ctx.sessionManager.getSessionName() ?? "";
+  const plan = planHandoffNames(originName, args, originId);
+  if (plan === undefined) {
+    ctx.ui.notify(
+      "scrub-handoff: this session names no next step to carry. Name it first with /name " +
+        "using a state prefix, or pass the next step as an argument.",
+      "warning",
+    );
+    return;
+  }
+
+  // Mark the origin as handed off while it is still the current session, so the picker
+  // shows the two halves of the pair rather than two identical rows. pi.setSessionName is
+  // on ExtensionAPI, not on ctx — hence the closure.
+  pi.setSessionName(plan.originName);
+
+  // Read from the session's own entries rather than from process state: a /reload
+  // re-imports this module, so anything held in a variable would be gone by the time the
+  // handoff runs, and the destination would lose the memory key for no visible reason.
+  const memory = findLastMemoryWrite(ctx.sessionManager.getEntries());
+  const message = buildHandoffMessage({
+    sessionId: originId,
+    name: plan.originName,
+    next: plan.next,
+    memory,
+  });
+
+  const result = await ctx.newSession({
+    parentSession: originId,
+    setup: async (sessionManager) => {
+      // appendCustomMessageEntry, not appendMessage. appendMessage wraps whatever it is
+      // given as { type: "message" }, and sessionEntryToContextMessages dispatches on
+      // entry.type — so a CustomMessage sent through appendMessage is written but never
+      // reaches the model. The first handoff shipped exactly that mistake and the
+      // destination agent reconstructed everything from memory instead.
+      sessionManager.appendCustomMessageEntry(
+        HANDOFF_CUSTOM_TYPE,
+        message,
+        false,
+        {
+          originSessionId: originId,
+          originName: plan.originName,
+          memoryTopicKey: memory?.topicKey ?? null,
+          memoryId: memory?.id ?? null,
+        },
+      );
+      sessionManager.appendSessionInfo(plan.destinationName);
+    },
+    withSession: async (fresh) => {
+      fresh.ui.notify(
+        memory?.topicKey !== undefined
+          ? `Handoff: ${plan.destinationName} — contexto en memoria ${memory.topicKey}`
+          : `Handoff: ${plan.destinationName} — sin memoria previa en esta sesión`,
+        "info",
+      );
+    },
+  });
+
+  if (result.cancelled) {
+    ctx.ui.notify(
+      "scrub-handoff: cancelled, no new session was created.",
+      "warning",
+    );
+  }
 }
 
 /** Sessions already offered the hint in this process (gate file may not exist yet). */
@@ -1581,6 +1669,13 @@ export default function (pi: ExtensionAPI): void {
       return handleScrubMark(params, ctx);
     },
   });
+  pi.registerCommand("scrub-handoff", {
+    description:
+      "Create the continuation this session promised: a new session, named and seeded with this session, the next step, and the key of the last memory written here. Use after naming this session with a 'traspaso:' state.",
+    handler: async (args, ctx) => {
+      await handleScrubHandoff(pi, args, ctx);
+    },
+  });
   pi.registerTool({
     name: "scrub_close",
     label: "Close this work block",
@@ -1592,7 +1687,12 @@ export default function (pi: ExtensionAPI): void {
       "text is read by a human scanning /resume, so: the NEXT step in plain words, " +
       "not what you implemented, not symbol names, not an API call. One glanceable line. " +
       "If a state word would contradict the text — a 'pausa:' whose text says the work " +
-      "moves elsewhere — pick the state that matches, because they are mutually exclusive.",
+      "moves elsewhere — pick the state that matches, because they are mutually exclusive. " +
+      "The closing memory's title should state the BLOCK's state — what is built, what is " +
+      "verified, what is next — not the finding that prompted it. That title travels " +
+      "verbatim in the handoff, and measured across three runs it is the difference " +
+      "between the next session dumping the whole project and finding the context in one " +
+      "search. A title that describes a discovery instead of a state works against it.",
     parameters: ScrubCloseParams,
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       return handleScrubClose(pi, params);
