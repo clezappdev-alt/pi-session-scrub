@@ -110,6 +110,30 @@ test("named session with trash verdict is an explicit-trash candidate", () => {
   });
 });
 
+test("named session with a finished verdict is still named-protected", () => {
+  // The interaction that carries the most weight, and the one neither of the tests
+  // above reaches. `traspaso:` and `hecho:` both derive a `finished` verdict, and an
+  // UNNAMED session with `finished` IS a deletion candidate. The name is checked
+  // first, so naming a completed block is what keeps it out of that path.
+  //
+  // Pinned because reordering the two checks — moving `finished` above the name test —
+  // would silently make every completed work block deletable, and no other test in
+  // this file would notice. Observed in real data: 01a14127 is named `traspaso:` and
+  // resolves to `finished`.
+  const result = classifySession(
+    session({ name: "traspaso: capa 2 del layout (B9)" }),
+    NOT_LIVE,
+    VERDICTS.finished,
+    NOT_EPHEMERAL,
+    20,
+  );
+  assert.deepEqual(result, {
+    kind: "named-protected",
+    name: "traspaso: capa 2 del layout (B9)",
+    verdict: VERDICTS.finished,
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Explicit verdicts that mean "dispose"
 // ---------------------------------------------------------------------------

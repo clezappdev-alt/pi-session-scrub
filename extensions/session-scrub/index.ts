@@ -5,9 +5,10 @@
 // destructive deletion), live session never touched, silent close (no shutdown handler
 // handler registered — the absence is intentional, spec T9).
 
-import { dirname, join, basename } from "node:path";
+import { join, basename } from "node:path";
 import {
   renameSync,
+  statSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -36,6 +37,24 @@ import {
   samePath,
 } from "./classify.ts";
 import { STATE, formatName, parseName, resolveVerdict, type State } from "./name.ts";
+import {
+  verifyAdoption,
+  freshnessWarning,
+  findBypassAttempt,
+  planAdoption,
+  parseAssignments,
+  resolveAssignments,
+  type AdoptionCandidate,
+  type AdoptionPlan,
+} from "./adopt.ts";
+import {
+  getTrashDir,
+  getBackupDir,
+  backupPathFor,
+  backupSessionFile,
+  snapshotFile,
+  freshnessOf,
+} from "./sessionfs.ts";
 import {
   findLastMemoryWrite,
   planHandoffNames,
@@ -275,16 +294,8 @@ function readPolicyConfig(cwd: string): PolicyConfig {
 // FS helpers (throwing atomic moves; callers catch per file)
 // ---------------------------------------------------------------------------
 
-/** Trash dir as sibling of Pi's `sessions/` root (two levels up from the
- * per-project dir) — never an invented transform, and never inside
- * `sessions/` where Pi could mistake trashed files for live sessions. */
-function getTrashDir(sessionDir: string): string {
-  return join(
-    dirname(dirname(sessionDir)),
-    "session-scrub-trash",
-    basename(sessionDir),
-  );
-}
+// `getTrashDir` lives in sessionfs.ts now, beside `getBackupDir`, so the invariant that
+// keeps backups out of the trash directory is visible where both are defined and testable.
 
 function moveToTrash(sessionPath: string, trashDir: string): string {
   mkdirSync(trashDir, { recursive: true });
@@ -1158,24 +1169,63 @@ async function appendVerdictToOther(
   });
 }
 
-async function appendRenameToOther(
+/**
+ * The write path now lives in `sessionfs.ts`, where it is testable: this file imports
+ * it and owns only the wiring. Extracted for the same reason `classify.ts` was — the
+ * ordering that makes a write into another session's file recoverable had no test.
+ */
+
+interface NameWriteResult {
+  backupPath: string;
+}
+
+/**
+ * Append a name to another session's file — the single by-path write behind both
+ * `/scrub-triage` renames and `/scrub-adopt`.
+ *
+ * NM-02, in the order the spec lists it: parse the file and refuse it when it does not
+ * look like a session file, back it up, write through `appendSessionInfo` (append-only,
+ * never rewriting an entry nor computing `parentId` by hand), then re-read and require
+ * that it still parses, gained exactly one entry, and that entry carries the requested
+ * name.
+ *
+ * NM-01/NM-03 own-session refusal is re-asserted here rather than trusted from the
+ * caller: resolve ran before the human confirm, so liveness is checked again at the
+ * moment of writing.
+ */
+async function appendNameToOther(
   sessionPath: string,
-  slug: string,
+  name: string,
   livePath: string | undefined,
-): Promise<void> {
-  if (slug.trim().length === 0) {
-    throw new Error("refusing rename: empty slug");
+  backupDir: string,
+): Promise<NameWriteResult> {
+  if (name.trim().length === 0) {
+    throw new Error("refusing name write: empty name");
   }
   // Defense in depth mirroring appendVerdictToOther: resolve ran before the
   // human confirm, so re-assert liveness here — never write into a gone
   // file or the live session. Append-only; never touches message content.
   if (!existsSync(sessionPath)) {
-    throw new Error("refusing rename: session file is gone");
+    throw new Error("refusing name write: session file is gone");
   }
   if (livePath !== undefined && samePath(sessionPath, livePath)) {
-    throw new Error("refusing rename: target is the live session");
+    throw new Error("refusing name write: target is the live session");
   }
-  SessionManager.open(sessionPath).appendSessionInfo(slug);
+
+  const before = snapshotFile(sessionPath);
+  if (!before.parsed) {
+    throw new Error("refusing name write: file does not look like a session file");
+  }
+  const backupPath = backupSessionFile(sessionPath, backupDir);
+  SessionManager.open(sessionPath).appendSessionInfo(name);
+
+  // A failed post-write check is surfaced, never counted as applied. The backup path
+  // travels in the error because at that point the file on disk is the unknown one.
+  const check = verifyAdoption(before, snapshotFile(sessionPath), name);
+  if (!check.ok) {
+    throw new Error(`write did not verify: ${check.cause} (backup: ${backupPath})`);
+  }
+  return { backupPath };
 }
 
 function escapeQuote(text: string): string {
@@ -1491,6 +1541,7 @@ async function handleScrubTriagePhase2(
     return;
   }
   const livePath = ctx.sessionManager.getSessionFile();
+  const backupDir = getBackupDir(ctx.sessionManager.getSessionDir());
   let applied = 0;
   let already = 0;
   let confirmedVerdicts = 0;
@@ -1564,9 +1615,25 @@ async function handleScrubTriagePhase2(
   const renameErrored: string[] = [];
   for (const r of resolvedRenames) {
     const { msgs, ageDays } = ageOf(r.targetPath);
+    // NM-03: sampled here, before the confirm and before any write touches the file.
+    // A target inside the window is not refused — refusing cannot separate a session
+    // closed five seconds ago from one open in another terminal — so it raises the bar
+    // instead, and only for the targets where the risk actually lives.
+    const fresh = freshnessOf(r.targetPath);
+    const warning = freshnessWarning(
+      fresh.fresh,
+      fresh.ageSeconds,
+      backupPathFor(r.targetPath, backupDir),
+    );
     const ok = await ctx.ui.confirm(
       `Rename ${r.shortId} to "${r.assignment.slug}"?`,
-      `existing="${r.existingName ?? "(unnamed)"}" → proposed="${r.assignment.slug}" · msgs=${msgs} · age=${ageDays}d`,
+      [
+        `existing="${r.existingName ?? "(unnamed)"}" → proposed="${r.assignment.slug}"`,
+        `msgs=${msgs} · age=${ageDays}d`,
+        warning,
+      ]
+        .filter((s) => s.length > 0)
+        .join("\n"),
     );
     if (!ok) {
       renameDeclined.push(r.shortId);
@@ -1574,14 +1641,8 @@ async function handleScrubTriagePhase2(
     }
     confirmedRenames += 1;
     try {
-      await appendRenameToOther(r.targetPath, r.assignment.slug, livePath);
-      const check = SessionManager.open(r.targetPath).getSessionName();
-      if (check === r.assignment.slug) {
-        renamed += 1;
-      } else {
-        ctx.ui.notify(`Skipped ${r.shortId}: post-write re-read mismatch`, "warning");
-        renameErrored.push(r.shortId);
-      }
+      await appendNameToOther(r.targetPath, r.assignment.slug, livePath, backupDir);
+      renamed += 1;
     } catch (err) {
       ctx.ui.notify(`Skipped ${r.shortId}: ${errorMessage(err)}`, "warning");
       renameErrored.push(r.shortId);
@@ -1603,7 +1664,203 @@ async function handleScrubTriagePhase2(
   ctx.ui.notify(parts.join("; ") + ".", "info");
 }
 
+// ---------------------------------------------------------------------------
+// /scrub-adopt — slice D, bulk sanitization
+// ---------------------------------------------------------------------------
+
+/** The five states, for the syntax reminder. Listed, never pre-chosen. */
+const STATE_VALUES_HINT = Object.values(STATE).join("|");
+
+/** Every session under this cwd, not the triage subset.
+ *
+ * Adoption deliberately does not reuse `gatherTriageCandidates`: that one filters by
+ * NM-04/NM-05, so the large unnamed sessions — precisely the pre-convention population
+ * this command exists for — are excluded from it. Filtering here would be the wrong
+ * filter. */
+async function gatherAdoptionCandidates(
+  ctx: ExtensionCommandContext,
+): Promise<AdoptionCandidate[]> {
+  const sessions = await SessionManager.list(ctx.cwd);
+  const out: AdoptionCandidate[] = [];
+  for (const info of sessions) {
+    out.push({
+      id: info.id,
+      path: info.path,
+      name: info.name,
+      verdict: readLatestVerdict(openSessionEntries(info.path)),
+      modifiedMs: fileMtimeMs(info.path),
+    });
+  }
+  return out;
+}
+
+/** Quote a name for display, collapsing anything that would break the line layout. */
+function displayName(name: string | undefined): string {
+  if (name === undefined || name.trim().length === 0) return "(unnamed)";
+  return name.replace(/\s+/g, " ").slice(0, 60);
+}
+
+/** mtime in epoch ms, or an epoch-old value when the file cannot be stat'ed.
+ *
+ * The fallback matters: a candidate whose file vanished between `list()` and here must
+ * read as *settled*, not fresh, or the guard would raise the bar on a file it cannot
+ * measure. `appendNameToOther` refuses the missing file outright anyway. */
+function fileMtimeMs(sessionPath: string): number {
+  try {
+    return statSync(sessionPath).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+async function handleScrubAdopt(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  const bypass = findBypassAttempt(args);
+  if (bypass !== undefined) {
+    ctx.ui.notify(
+      `${bypass} is not a bypass flag; no such flag exists. A session written within ` +
+        "the last 2 minutes is confirmed, not skipped — waiting is the only bypass.",
+      "warning",
+    );
+    return;
+  }
+
+  const backupDir = getBackupDir(ctx.sessionManager.getSessionDir());
+  const livePath = ctx.sessionManager.getSessionFile();
+  const all = await gatherAdoptionCandidates(ctx);
+
+  // The live session is never a target here: NM-03 refuses it outright, and naming it
+  // through the plugin's own tool is what `scrub_close` is for. It is reported, not
+  // silently dropped, so the count of "nothing adopted" is never a surprise.
+  const live = livePath === undefined ? [] : all.filter((c) => samePath(c.path, livePath));
+  const candidates = all.filter((c) => !live.some((l) => samePath(l.path, c.path)));
+
+  const parsed = parseAssignments(args);
+  const { assignments, problems } = resolveAssignments(parsed, candidates);
+  for (const p of problems) ctx.ui.notify(p, "warning");
+
+  const plans = planAdoption(candidates, assignments, Date.now());
+  const currentName = new Map(all.map((c) => [c.id, c.name]));
+  const nameOf = (id: string): string => displayName(currentName.get(id));
+  const writes = plans.filter((p) => p.name !== undefined);
+  const adopted = plans.filter((p) => p.skip === "already-adopted");
+  const needsState = plans.filter((p) => p.skip === "needs-state");
+  const textless = writes.filter((p) => p.textless);
+
+  const apply = args.includes("--apply");
+  if (!apply || !isInteractive(ctx)) {
+    const lines = [
+      "Dry-run — nothing is written by this command.",
+      writes.length > 0
+        ? `would adopt ${writes.length} (prefix only; the human text is never rewritten):`
+        : "nothing to adopt.",
+    ];
+    for (const w of writes) {
+      const arrow = w.derived ? "verdict" : "your assignment";
+      lines.push(`  ${shortId(w.id)}  ${nameOf(w.id)} → ${w.name}  (${arrow})`);
+    }
+    if (needsState.length > 0) {
+      lines.push(`needs a state from you (${needsState.length}) — nothing was invented for these:`);
+      for (const n of needsState) {
+        lines.push(`  ${shortId(n.id)}  ${nameOf(n.id)}`);
+      }
+      // A syntax reminder, never a filled-in batch. Emitting one ready-to-paste line
+      // with a state per session would hand the human eleven `pausa:` suggestions it
+      // did not ask for and cannot justify — inventing the state by proxy is the same
+      // failure as inventing it outright, and a bulk line is the form most likely to be
+      // pasted without reading.
+      lines.push(`  assign inline: /scrub-adopt --apply <id>:${STATE_VALUES_HINT} […]`);
+    }
+    if (textless.length > 0) {
+      lines.push(
+        `no readable text after the prefix (${textless.length}): ${textless
+          .map((t) => shortId(t.id))
+          .join(", ")} — /name them with words if you want them legible in /resume`,
+      );
+    }
+    if (adopted.length > 0) lines.push(`already adopted, untouched (${adopted.length})`);
+    if (live.length > 0) {
+      lines.push(`live session, refused by design (${live.length}) — use scrub_close to name it`);
+    }
+    if (writes.length === 0 && needsState.length === 0) {
+      lines.push("no unprefixed sessions left in this project.");
+    }
+    ctx.ui.notify(lines.join("\n"), "info");
+    return;
+  }
+
+  if (writes.length === 0) {
+    ctx.ui.notify("Nothing to adopt — no unprefixed session has a state to apply.", "info");
+    return;
+  }
+
+  // NM-03, and the decision taken for slice D: the extra confirmation appears only for
+  // targets inside the freshness window. The settled remainder gets one summary prompt
+  // instead of one prompt each — a wall of prompts is not a safeguard, it is a habit.
+  const freshWrites = writes.filter((w) => w.fresh);
+  const settledWrites = writes.filter((w) => !w.fresh);
+
+  const accepted = new Map<string, AdoptionPlan>();
+  if (settledWrites.length > 0) {
+    const ok = await ctx.ui.confirm(
+      `Adopt ${settledWrites.length} session${settledWrites.length === 1 ? "" : "s"}?`,
+      [
+        settledWrites.map((w) => `  ${shortId(w.id)} → ${w.name}`).join("\n"),
+        `Backups go to ${backupDir}`,
+      ].join("\n"),
+    );
+    if (ok) for (const w of settledWrites) accepted.set(w.id, w);
+  }
+  for (const w of freshWrites) {
+    const ok = await ctx.ui.confirm(
+      `Adopt ${shortId(w.id)} → "${w.name}"?`,
+      [
+        `${nameOf(w.id)} → ${w.name}`,
+        freshnessWarning(true, w.ageSeconds, backupPathFor(w.path, backupDir)),
+      ]
+        .filter((s) => s.length > 0)
+        .join("\n"),
+    );
+    if (ok) accepted.set(w.id, w);
+  }
+
+  let adoptedCount = 0;
+  const declined: string[] = [];
+  const errored: string[] = [];
+  for (const w of writes) {
+    if (!accepted.has(w.id)) {
+      declined.push(shortId(w.id));
+      continue;
+    }
+    try {
+      await appendNameToOther(w.path, w.name!, livePath, backupDir);
+      adoptedCount += 1;
+    } catch (err) {
+      ctx.ui.notify(`Skipped ${shortId(w.id)}: ${errorMessage(err)}`, "warning");
+      errored.push(shortId(w.id));
+    }
+  }
+
+  const parts = [`adopted ${adoptedCount} of ${writes.length}`];
+  if (declined.length > 0) parts.push(`${declined.length} declined [${declined.join(", ")}]`);
+  if (errored.length > 0) parts.push(`${errored.length} error [${errored.join(", ")}]`);
+  if (needsState.length > 0) parts.push(`${needsState.length} still need a state`);
+  parts.push(`backups in ${backupDir}`);
+  ctx.ui.notify(parts.join("; ") + ".", "info");
+}
+
 async function handleScrubTriage(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  // NM-03 offers no bypass. Refusing the flag by name beats letting it fall through
+  // to the session-search text, where it would be reported as "no sessions matched" —
+  // an answer that reads like a bug rather than a refusal.
+  const bypass = findBypassAttempt(args);
+  if (bypass !== undefined) {
+    ctx.ui.notify(
+      `${bypass} is not a bypass flag; no such flag exists. A session written within ` +
+        "the last 2 minutes is confirmed, not skipped — waiting is the only bypass.",
+      "warning",
+    );
+    return;
+  }
   if (!args.includes("--apply")) {
     const verbose = args.split(/\s+/).includes("--verbose");
     await handleScrubTriagePhase1(ctx, verbose);
@@ -1657,6 +1914,12 @@ export default function (pi: ExtensionAPI): void {
     description: "Assisted triage of verdict-less sessions (digests, then confirmed writes)",
     handler: async (args, ctx) => {
       await handleScrubTriage(args, ctx);
+    },
+  });
+  pi.registerCommand("scrub-adopt", {
+    description: "Apply the naming convention to sessions that predate it (dry-run first)",
+    handler: async (args, ctx) => {
+      await handleScrubAdopt(args, ctx);
     },
   });
   pi.registerTool({

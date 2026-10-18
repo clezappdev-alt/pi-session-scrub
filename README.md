@@ -34,6 +34,41 @@ opposite:
 - `/scrub-triage [--apply]` — assisted triage of verdict-less sessions:
   bounded digest packs first (read-only), your judgment in chat, then
   `--apply` writes verdicts with per-item `confirm` (see below).
+- `/scrub-adopt [--apply] [id:estado …]` — apply the naming convention to
+  sessions that predate it (see below).
+
+## Adoption
+
+`/scrub-adopt` adds a missing `state:` prefix to sessions written before
+the convention existed. **The human text after the prefix is never
+rewritten** — adoption supplies the prefix and keeps whatever you wrote. A
+session whose name already carries a prefix is left alone.
+
+A state is filled without asking only when a machine already asserted one:
+`paused` becomes `pausa:`, `finished` becomes `hecho:`. `keep`, `ephemeral`
+and `trash` derive nothing, and neither does a session that is merely old —
+an old session is not `pausa:`. Those are listed as needing a state, and you
+assign one inline in the same command:
+
+```
+/scrub-adopt                                  # dry-run, writes nothing
+/scrub-adopt --apply                          # only the machine-derivable
+/scrub-adopt --apply 01a1:pausa 01a2:espera   # plus the ones you decide
+```
+
+An abbreviated id matching more than one session is refused rather than
+resolved to whichever was listed first.
+
+Each write is backed up to `session-scrub-backups/` first and verified
+afterwards: the file must still parse, must have gained exactly one entry,
+and that entry must carry the name asked for. Backups are **not** the trash
+directory — restoring one would overwrite the file it was taken from.
+
+Sessions written within the last 2 minutes are confirmed individually, with
+the elapsed time, the risk of interleaving with Pi's own flush, and the
+backup location stated in the prompt. There is no flag to skip that; waiting
+is the only bypass. Your own live session is never a target — use
+`scrub_close` to name it.
 
 ## Triage
 
