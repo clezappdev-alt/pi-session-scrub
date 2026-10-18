@@ -5,7 +5,7 @@
 // reorder breaks something visible instead of corrupting a session file quietly.
 //
 // The first test is the one that matters most: a backup must never land where
-// /scrub-restore would find it.
+// /scrub:restore would find it.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -37,7 +37,7 @@ function runtime() {
 // ---------------------------------------------------------------------------
 
 test("a backup never lands inside the trash directory", () => {
-  // The invariant that keeps /scrub-restore honest. If backups lived in the trash dir,
+  // The invariant that keeps /scrub:restore honest. If backups lived in the trash dir,
   // restoring one would overwrite the very file it was taken from.
   const r = runtime();
   try {

@@ -58,11 +58,11 @@ handler definitions are cited in their own sections.
 
 | Surface | Registration |
 | --- | --- |
-| `/scrub` | `pi.registerCommand("scrub"` — `Audit this project's sessions (read-only)` — `index.ts:1636` — handler `handleScrub` |
-| `/scrub-apply` | `pi.registerCommand("scrub-apply"` — `Trash actionable sessions` (dry-run first, reversible via `/scrub-restore`) — `index.ts:1642` — handler `handleScrubApply` |
-| `/scrub-restore` | `pi.registerCommand("scrub-restore"` — `Restore trashed sessions for this project` — `index.ts:1648` — handler `handleScrubRestore` |
-| `/scrub-init` | `pi.registerCommand("scrub-init"` — `Write the opt-in session-scrub policy block into AGENTS` — `index.ts:1654` — handler `handleScrubInit` |
-| `/scrub-triage` | `pi.registerCommand("scrub-triage"` — `Assisted triage of verdict-less sessions (digests, then confirmed writes)` — `index.ts:1660` — handler `handleScrubTriage` |
+| `/scrub:audit` | `pi.registerCommand("scrub:audit"` — `Audit this project's sessions (read-only)` — `index.ts:1636` — handler `handleScrub` |
+| `/scrub:apply` | `pi.registerCommand("scrub:apply"` — `Trash actionable sessions` (dry-run first, reversible via `/scrub:restore`) — `index.ts:1642` — handler `handleScrubApply` |
+| `/scrub:restore` | `pi.registerCommand("scrub:restore"` — `Restore trashed sessions for this project` — `index.ts:1648` — handler `handleScrubRestore` |
+| `/scrub:init` | `pi.registerCommand("scrub:init"` — `Write the opt-in session-scrub policy block into AGENTS` — `index.ts:1654` — handler `handleScrubInit` |
+| `/scrub:triage` | `pi.registerCommand("scrub:triage"` — `Assisted triage of verdict-less sessions (digests, then confirmed writes)` — `index.ts:1660` — handler `handleScrubTriage` |
 | `scrub_mark` tool | `pi.registerTool({` — `name: "scrub_mark"` — `index.ts:1666` — handler `handleScrubMark` |
 | `agent_start` hook | `pi.on("agent_start"` — `index.ts:1676` — handler `handleAgentStart` |
 | `agent_end` hook | `pi.on("agent_end"` — `index.ts:1679` — handler `handleAgentEnd` |
@@ -73,11 +73,11 @@ Consequently
 nothing in the plugin runs without a command invocation or an agent
 start/end event, and closing a session never prompts.
 
-## 1. `/scrub` — read-only audit
+## 1. `/scrub:audit` — read-only audit
 
 **Handler** `handleScrub` (`index.ts:537-542`). It takes `args` and immediately
 discards it with `void args` (`index.ts:538`), so **no flag is parsed at all** —
-`/scrub --dry-run`, `/scrub --json`, `/scrub anything` all behave identically.
+`/scrub:audit --dry-run`, `/scrub:audit --json`, `/scrub:audit anything` all behave identically.
 
 **Data acquisition.** `auditSessions` (`index.ts:467-523`):
 
@@ -152,7 +152,7 @@ Per-kind line formats:
 
 `id8` is always `info.id.slice(0, 8)` (`index.ts:326`).
 
-**Idempotency.** Fully idempotent and side-effect free: `/scrub` performs no
+**Idempotency.** Fully idempotent and side-effect free: `/scrub:audit` performs no
 write, no `mkdirSync`, no `confirm`, and no trash-dir creation anywhere in
 `async function handleScrub` (`index.ts:537-542`). Running it twice produces
 byte-identical output apart from the synthetic live record's `now` timestamps
@@ -184,7 +184,7 @@ byte-identical output apart from the synthetic live record's `now` timestamps
 (`--json`) output, per-session detail beyond the single formatted line, no
 selection, no mutation, no OS trash, no purge.
 
-## 2. `/scrub-apply` — dispose with consent
+## 2. `/scrub:apply` — dispose with consent
 
 **Handler** `handleScrubApply` (`index.ts:552-588`).
 
@@ -209,7 +209,7 @@ is read.
    (`getTrashDir(ctx.sessionManager.getSessionDir())` `index.ts:567`) and loop
    the actionable set **in audit order** (`const a of actionable` `index.ts:569`).
 6. Per item: `ctx.ui.confirm` with `"Trash session <id8>?"`, the audit line, the
-   detail, and `"Move is reversible via /scrub-restore."`
+   detail, and `"Move is reversible via /scrub:restore."`
    (`ctx.ui.confirm(` `index.ts:574-577`).
    For `old-needs-confirm` the detail additionally carries the first 80 chars of
    the first message and the modified ISO timestamp
@@ -259,14 +259,14 @@ If the whole set was declined the counter never increments
 picker, no `--json`, no dry-run-by-flag bypass of the confirm loop, no permanent
 deletion, no per-file trash destination override.
 
-## 3. `/scrub-restore` — restore from trash
+## 3. `/scrub:restore` — restore from trash
 
 **Handler** `handleScrubRestore` (`index.ts:590-620`).
 
 **Flags actually parsed: none.** `void args` (`index.ts:591`) discards the whole
 argument string. There is no `--dry-run` handling: the non-TUI guard is a direct
 `!isInteractive(ctx)` check (`index.ts:598`), not `resolveDryRun`. Consequently
-**in the TUI, `/scrub-restore --dry-run` restores for real** — the flag is
+**in the TUI, `/scrub:restore --dry-run` restores for real** — the flag is
 silently ignored. This is a real as-built behavior, not a spec intention.
 
 **Flow.**
@@ -294,7 +294,7 @@ silently ignored. This is a real as-built behavior, not a spec intention.
 run finds it gone. Verdicts are **not** cleared — restoring only renames the file
 back, and the verdict custom entries live inside it, so a restored
 `trash`-verdicted session immediately classifies as a candidate again on the next
-`/scrub`. Nothing in `moveFromTrash` touches file contents (`index.ts:439-447`).
+`/scrub:audit`. Nothing in `moveFromTrash` touches file contents (`index.ts:439-447`).
 
 **Error / edge paths.**
 
@@ -315,7 +315,7 @@ derived from this project's session dir
 (`const sessionsDir = ctx.sessionManager.getSessionDir();` `index.ts:592-593`),
 no `--json`.
 
-## 4. `/scrub-init` — write the POLICY block
+## 4. `/scrub:init` — write the POLICY block
 
 **Handler** `handleScrubInit` (`index.ts:622-638`). `void args` (`index.ts:623`)
 — **no flags are parsed**.
@@ -360,7 +360,7 @@ plugin ever writes outside trash and session files.
 block, no update of `ephemeral-flows` (that is a manual edit), no writing any
 other file, no project-root discovery beyond `ctx.cwd`.
 
-## 5. `/scrub-triage` and `--apply`
+## 5. `/scrub:triage` and `--apply`
 
 Entry point `handleScrubTriage` (`index.ts:1610-1626`).
 
@@ -654,7 +654,7 @@ if nothing was confirmed at all → `notify` with
 `Triaged <applied+already> of <resolved> (<applied> applied + <already> already)`
 plus optional `N declined [ids]`, `N conflict [ids]`, `N error [ids]`,
 `renamed <n> of <N> (<d> declined, <e> error)`, terminated by
-`Re-run /scrub to see new classifications.` (`const parts` `index.ts:1599-1607`).
+`Re-run /scrub:audit to see new classifications.` (`const parts` `index.ts:1599-1607`).
 
 **Idempotency.** A second `--apply` with the same assignments finds the targets
 already carry a matching verdict and takes the `already` path
@@ -772,9 +772,9 @@ first user text.
 **Action on trigger** (`ctx.ui.setStatus(` `index.ts:704-713`), in order:
 
 1. The status key is `STATUS_KEY`, whose value is
-   `"scrub-name"` (`index.ts:66`),
+   `"scrub:name"` (`index.ts:66`),
    and it is used by `ctx.ui.setStatus(` (`index.ts:704`). The status text is
-   Spanish by design.
+   English, like the rest of the plugin's user-facing copy.
 2. The session id is added to `hintedSessions` — the
    in-process gate — at the same step as the earlier persistent-branch add
    (`hintedSessions.add(sessionId);` `index.ts:699-705`).
@@ -1031,8 +1031,8 @@ block is inert until a human fills it in.
 5. Return the restored path (`return restoredPath;` `index.ts:446`); the caller
    ignores it (`moveFromTrash(p, sessionsDir)` `index.ts:613`).
 
-**Recovery paths that exist in the code:** the `/scrub-restore` command,
-registered at `"scrub-restore", {` `index.ts:1648` and handled by
+**Recovery paths that exist in the code:** the `/scrub:restore` command,
+registered at `"scrub:restore", {` `index.ts:1648` and handled by
 `function handleScrubRestore` `index.ts:590`; and, by construction, a manual `mv`
 of the `.jsonl` file back into the session dir — the code imposes no format
 requirement beyond the `.jsonl` listing filter (`index.ts:452`).
@@ -1067,7 +1067,7 @@ convention is documented in the section header comment at
   grepped the full source; `node:fs` imports are exactly `renameSync`, `mkdirSync`,
   `readdirSync`, `readFileSync`, `writeFileSync`, `existsSync`, `realpathSync`
   (`import {` `index.ts:9-17`) — no delete primitive is even imported.
-- Never purges the trash. There is no `/scrub-empty` and no retention policy in
+- Never purges the trash. There is no `/scrub:empty` and no retention policy in
   this file; the only `writeFileSync` outside session entries is `AGENTS.md`
   (`writeFileSync(agentsPath` `index.ts:636`).
 - Never writes into the live session's message content. The only writes to any
@@ -1133,12 +1133,12 @@ every case below.
    here. Same for the UX spec's compact-default table (`…-ux/spec.md:87`) and the
    deferred-ID line (`…-ux/spec.md:104`), which the canonical spec does not
    describe.
-6. **`/scrub-restore` dry-run flag.** `spec.md:201` and REQ-11 (`spec.md:331`)
+6. **`/scrub:restore` dry-run flag.** `spec.md:201` and REQ-11 (`spec.md:331`)
    describe implicit dry-run for non-TUI. Code matches that
    (`!isInteractive` `index.ts:598`). But the code takes **no** `--dry-run` argument at all
    (`void args`, `index.ts:591`), so `--dry-run` in the TUI is a no-op rather
    than a preflight. Neither the spec nor `README.md` claims the flag exists for
-   this command, so this is a code-level asymmetry with `/scrub-apply` rather
+   this command, so this is a code-level asymmetry with `/scrub:apply` rather
    than a spec contradiction.
 7. **`README.md` (non-normative) vs code.** `README.md` says triage renames allow
    duplicates "like `/name`"; code rejects a second assignment of the same

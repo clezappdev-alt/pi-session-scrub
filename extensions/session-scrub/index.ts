@@ -62,6 +62,7 @@ import {
   buildHandoffMessage,
 } from "./handoff.ts";
 import { uniqueAbbreviations, abbrevOf, idFromFilename } from "./ids.ts";
+import { renderCloseCall, renderMarkCall, renderToolResultLine } from "./render.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -71,7 +72,7 @@ const VERDICT_CUSTOM_TYPE = "session-scrub/verdict";
 const HINT_CUSTOM_TYPE = "session-scrub/name-hint";
 const POLICY_START = "<!-- pi-session-scrub:start -->";
 const POLICY_END = "<!-- pi-session-scrub:end -->";
-const STATUS_KEY = "scrub-name";
+const STATUS_KEY = "scrub:name";
 
 const POLICY_TEMPLATE = `<!-- pi-session-scrub:start -->
 # session-scrub policy — project-local, opt-in.
@@ -403,7 +404,7 @@ async function auditSessions(ctx: ExtensionCommandContext): Promise<{
     };
     audited.unshift({
       info: liveInfo,
-      // Resolved like every other row. This one is displayed in /scrub beside rows that
+      // Resolved like every other row. This one is displayed in /scrub:audit beside rows that
       // read their verdict through `resolveVerdict`, so reading the entry raw here let
       // the live session show a verdict its own name contradicts — the one row in the
       // listing that could disagree with itself.
@@ -474,7 +475,7 @@ async function handleScrubApply(args: string, ctx: ExtensionCommandContext): Pro
         : "";
     const ok = await ctx.ui.confirm(
       `Trash session ${a.shortId}?`,
-      `${formatAuditLine(a)}${detail} Move is reversible via /scrub-restore.`,
+      `${formatAuditLine(a)}${detail} Move is reversible via /scrub:restore.`,
     );
     if (!ok) continue;
     try {
@@ -559,22 +560,24 @@ const ScrubMarkParams = Type.Object({
   reason: Type.Optional(Type.String()),
 });
 
-// `details: undefined`, not `{}`: the contract asks for `undefined` when a result carries no
-// structured details, and an empty object is a shape a renderer will try to read.
-function toolResult(text: string): {
+// `details` carries the structured outcome (`{ ok }`) the tool result renderer reads for its
+// tone; an empty `{}` is a shape the contract forbids (spec S5.4) and a renderer would try to read.
+// `ok` defaults to true so a call site that does not model an outcome — none exists today —
+// does not flip the renderer into the warning tone by accident.
+function toolResult(text: string, ok = true): {
   content: [{ type: "text"; text: string }];
-  details: undefined;
+  details: { ok: boolean };
 } {
-  return { content: [{ type: "text" as const, text }], details: undefined };
+  return { content: [{ type: "text" as const, text }], details: { ok } };
 }
 
 async function handleScrubMark(
   pi: ExtensionAPI,
   params: Static<typeof ScrubMarkParams>,
   ctx: ExtensionContext,
-): Promise<{ content: [{ type: "text"; text: string }]; details: undefined }> {
+): Promise<{ content: [{ type: "text"; text: string }]; details: { ok: boolean } }> {
   if (!isVerdict(params.verdict)) {
-    return toolResult(`Invalid verdict. Use one of: keep, paused, finished, ephemeral, trash.`);
+    return toolResult(`Invalid verdict. Use one of: keep, paused, finished, ephemeral, trash.`, false);
   }
   // The name is the single carrier (see name.ts resolveVerdict). Writing a verdict entry
   // for a session that already declares a state would leave two records disagreeing, and
@@ -585,11 +588,12 @@ async function handleScrubMark(
     return toolResult(
       `This session already declares its state as "${currentName}". The name is the record; ` +
         `use scrub_close to change it. Nothing was written.`,
+      false,
     );
   }
   const liveFile = ctx.sessionManager.getSessionFile();
   if (liveFile === undefined) {
-    return toolResult("No live session file; verdict not recorded.");
+    return toolResult("No live session file; verdict not recorded.", false);
   }
   // `pi.appendEntry` writes through the live session's own manager, so the entry lands in
   // memory and on disk together. Opening a second SessionManager on the same file (what
@@ -602,9 +606,9 @@ async function handleScrubMark(
       at: new Date().toISOString(),
       reason: params.reason,
     });
-    return toolResult(`Recorded verdict: ${params.verdict}.`);
+    return toolResult(`Recorded verdict: ${params.verdict}.`, true);
   } catch (err) {
-    return toolResult(`Could not record verdict: ${errorMessage(err)}`);
+    return toolResult(`Could not record verdict: ${errorMessage(err)}`, false);
   }
 }
 
@@ -635,15 +639,15 @@ function handleScrubClose(
   try {
     pi.setSessionName(name);
   } catch (err) {
-    return toolResult(`Could not set the session name: ${errorMessage(err)}`);
+    return toolResult(`Could not set the session name: ${errorMessage(err)}`, false);
   }
-  return toolResult(`Session name set: ${name}`);
+  return toolResult(`Session name set: ${name}`, true);
 }
 
 const HANDOFF_CUSTOM_TYPE = "session-scrub/handoff";
 
 /**
- * `/scrub-handoff` — create the continuation this session promised, and start it with
+ * `/scrub:handoff` — create the continuation this session promised, and start it with
  * the origin, the next step and the memory key.
  *
  * A command rather than a tool, and not by preference: `ctx.newSession` exists only on
@@ -661,7 +665,7 @@ async function handleScrubHandoff(
   const plan = planHandoffNames(originName, args, originId);
   if (plan === undefined) {
     ctx.ui.notify(
-      "scrub-handoff: this session names no next step to carry. Name it first with /name " +
+      "scrub:handoff: this session names no next step to carry. Name it first with /name " +
         "using a state prefix, or pass the next step as an argument.",
       "warning",
     );
@@ -708,8 +712,8 @@ async function handleScrubHandoff(
     withSession: async (fresh) => {
       fresh.ui.notify(
         memory?.topicKey !== undefined
-          ? `Handoff: ${plan.destinationName} — contexto en memoria ${memory.topicKey}`
-          : `Handoff: ${plan.destinationName} — sin memoria previa en esta sesión`,
+          ? `Handoff: ${plan.destinationName} — context in memory ${memory.topicKey}`
+          : `Handoff: ${plan.destinationName} — no prior memory in this session`,
         "info",
       );
     },
@@ -717,7 +721,7 @@ async function handleScrubHandoff(
 
   if (result.cancelled) {
     ctx.ui.notify(
-      "scrub-handoff: cancelled, no new session was created.",
+      "scrub:handoff: cancelled, no new session was created.",
       "warning",
     );
   }
@@ -742,7 +746,7 @@ async function maybeOfferHint(
     }
     const slug = deriveSlug(texts[0] ?? "");
     if (slug.length === 0) return false;
-    ctx.ui.setStatus(STATUS_KEY, `sugerido: /name ${slug}`);
+    ctx.ui.setStatus(STATUS_KEY, `suggested: /name ${slug}`);
     hintedSessions.add(sessionId);
     const liveFile = ctx.sessionManager.getSessionFile();
     if (liveFile === undefined) return true;
@@ -1221,7 +1225,7 @@ interface NameWriteResult {
 
 /**
  * Append a name to another session's file — the single by-path write behind both
- * `/scrub-triage` renames and `/scrub-adopt`.
+ * `/scrub:triage` renames and `/scrub:adopt`.
  *
  * NM-02, in the order the spec lists it: parse the file and refuse it when it does not
  * look like a session file, back it up, write through `appendSessionInfo` (append-only,
@@ -1375,7 +1379,7 @@ async function gatherTriageCandidates(ctx: ExtensionCommandContext): Promise<{
     // Resolved, not raw. A name carrying a state prefix IS that session's verdict — the
     // single carrier — so a session named `hecho:` is not verdict-less and has no business
     // being offered for a verdict it already derives. Reading the entry raw made triage
-    // offer sessions that /scrub had just shown as named-protected: 7 of 52 in a real
+    // offer sessions that /scrub:audit had just shown as named-protected: 7 of 52 in a real
     // project, every one of them already declaring its state.
     //
     // Cost, accepted: those sessions lose triage's rename path. The name is written by a
@@ -1476,7 +1480,7 @@ async function handleScrubTriagePhase1(ctx: ExtensionCommandContext, verbose: bo
   if (deferred.length > 0) {
     lines.push(`deferred (${deferred.length}): ${deferred.map((c) => abbrevOf(abbrevs, c.info.id)).join(", ")}`);
   }
-  lines.push('Packs are quoted-as-data: judge the words, then approve in chat with /scrub-triage --apply id:verdict:"reason" [...] (machine keeps accept bare id:keep; renames as id:name:"slug"); --verbose shows full packs; --dry-run previews; nothing is written by this command.');
+  lines.push('Packs are quoted-as-data: judge the words, then approve in chat with /scrub:triage --apply id:verdict:"reason" [...] (machine keeps accept bare id:keep; renames as id:name:"slug"); --verbose shows full packs; --dry-run previews; nothing is written by this command.');
   ctx.ui.notify(lines.join("\n"), "info");
 }
 
@@ -1716,12 +1720,12 @@ async function handleScrubTriagePhase2(
   if (resolvedRenames.length > 0) {
     parts.push(`renamed ${renamed} of ${resolvedRenames.length} (${renameDeclined.length} declined, ${renameErrored.length} error)`);
   }
-  parts.push("Re-run /scrub to see new classifications.");
+  parts.push("Re-run /scrub:audit to see new classifications.");
   ctx.ui.notify(parts.join("; ") + ".", "info");
 }
 
 // ---------------------------------------------------------------------------
-// /scrub-adopt — slice D, bulk sanitization
+// /scrub:adopt — slice D, bulk sanitization
 // ---------------------------------------------------------------------------
 
 /** The five states, for the syntax reminder. Listed, never pre-chosen. */
@@ -1785,7 +1789,7 @@ async function handleScrubAdopt(args: string, ctx: ExtensionCommandContext): Pro
   const all = await gatherAdoptionCandidates(ctx);
   // Same invariant as the other commands: derive widths from every session in the
   // project (candidate or not), so a prefix shown in dry-run, confirms and results
-  // stays cross-referenceable with /scrub and /scrub-triage output.
+  // stays cross-referenceable with /scrub:audit and /scrub:triage output.
   const abbrevs = uniqueAbbreviations(all.map((c) => c.id));
 
   // The live session is never a target here: NM-03 refuses it outright, and naming it
@@ -1828,7 +1832,7 @@ async function handleScrubAdopt(args: string, ctx: ExtensionCommandContext): Pro
       // did not ask for and cannot justify — inventing the state by proxy is the same
       // failure as inventing it outright, and a bulk line is the form most likely to be
       // pasted without reading.
-      lines.push(`  assign inline: /scrub-adopt --apply <id>:${STATE_VALUES_HINT} […]`);
+      lines.push(`  assign inline: /scrub:adopt --apply <id>:${STATE_VALUES_HINT} […]`);
     }
     if (textless.length > 0) {
       lines.push(
@@ -1946,43 +1950,43 @@ async function handleScrubTriage(args: string, ctx: ExtensionCommandContext): Pr
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI): void {
-  pi.registerCommand("scrub", {
+  pi.registerCommand("scrub:audit", {
     description: "Audit this project's sessions (read-only)",
     handler: async (args, ctx) => {
       await handleScrub(args, ctx);
     },
   });
-  pi.registerCommand("scrub-apply", {
-    description: "Trash actionable sessions (dry-run first, reversible via /scrub-restore)",
+  pi.registerCommand("scrub:apply", {
+    description: "Trash actionable sessions (dry-run first, reversible via /scrub:restore)",
     handler: async (args, ctx) => {
       await handleScrubApply(args, ctx);
     },
   });
-  pi.registerCommand("scrub-restore", {
+  pi.registerCommand("scrub:restore", {
     description: "Restore trashed sessions for this project",
     handler: async (args, ctx) => {
       await handleScrubRestore(args, ctx);
     },
   });
-  pi.registerCommand("scrub-init", {
+  pi.registerCommand("scrub:init", {
     description: "Write the opt-in session-scrub policy block into AGENTS.md",
     handler: async (args, ctx) => {
       await handleScrubInit(args, ctx);
     },
   });
-  pi.registerCommand("scrub-triage", {
+  pi.registerCommand("scrub:triage", {
     description: "Assisted triage of verdict-less sessions (digests, then confirmed writes)",
     handler: async (args, ctx) => {
       await handleScrubTriage(args, ctx);
     },
   });
-  pi.registerCommand("scrub-adopt", {
+  pi.registerCommand("scrub:adopt", {
     description: "Apply the naming convention to sessions that predate it (dry-run first)",
     handler: async (args, ctx) => {
       await handleScrubAdopt(args, ctx);
     },
   });
-  pi.registerTool({
+  pi.registerTool<typeof ScrubMarkParams, { ok: boolean }>({
     name: "scrub_mark",
     label: "Record session verdict",
     description:
@@ -1997,18 +2001,22 @@ export default function (pi: ExtensionAPI): void {
       idempotentHint: false,
       openWorldHint: false,
     },
+    // Painted through theme tokens only (S7): the renderers delegate to the host-free
+    // render module so the visible output stays testable without the host.
+    renderCall: (args, theme) => renderMarkCall(args, theme),
+    renderResult: (result, options, theme) => renderToolResultLine(result, options, theme),
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
       return handleScrubMark(pi, params, ctx);
     },
   });
-  pi.registerCommand("scrub-handoff", {
+  pi.registerCommand("scrub:handoff", {
     description:
       "Create the continuation this session promised: a new session, named and seeded with this session, the next step, and the key of the last memory written here. Use after naming this session with a 'traspaso:' state.",
     handler: async (args, ctx) => {
       await handleScrubHandoff(pi, args, ctx);
     },
   });
-  pi.registerTool({
+  pi.registerTool<typeof ScrubCloseParams, { ok: boolean }>({
     name: "scrub_close",
     label: "Close this work block",
     description:
@@ -2016,7 +2024,7 @@ export default function (pi: ExtensionAPI): void {
       "state: pausa (here, next step known), abierto (here, unknown), " +
       "espera (blocked elsewhere), traspaso (continues in another session), " +
       "hecho (finished). " +
-      "traspaso commits you to more than a name: tell the user to run /scrub-handoff, " +
+      "traspaso commits you to more than a name: tell the user to run /scrub:handoff, " +
       "because that command is what actually creates the continuation and only they can " +
       "run it. A traspaso with no handoff leaves /resume promising a continuation that " +
       "never existed, which is worse than no name because it is trusted. " +
@@ -2039,6 +2047,9 @@ export default function (pi: ExtensionAPI): void {
       idempotentHint: true,
       openWorldHint: false,
     },
+    // Same delegation as scrub_mark; the close result's tone follows its details.ok too.
+    renderCall: (args, theme) => renderCloseCall(args, theme),
+    renderResult: (result, options, theme) => renderToolResultLine(result, options, theme),
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       return handleScrubClose(pi, params);
     },

@@ -56,7 +56,7 @@ export function abbrevOf(map: Map<string, string>, id: string): string {
 /**
  * The session id inside a session filename, which Pi writes as `<timestamp>_<uuid>.jsonl`.
  *
- * The id is not at the front of the name. `/scrub-restore` took the first eight characters
+ * The id is not at the front of the name. `/scrub:restore` took the first eight characters
  * of the basename, which are the **date**: every session trashed the same day rendered as
  * `2026-10-`, so the prompt asking whether to restore a file could not say which file. The
  * id follows the separator.

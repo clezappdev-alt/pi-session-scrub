@@ -257,7 +257,7 @@ test("a bare id with no state is rejected", () => {
 });
 
 test("a flag is not a malformed assignment", () => {
-  // Found by running the command for real: `/scrub-adopt --apply 01a0aabb:pausa`
+  // Found by running the command for real: `/scrub:adopt --apply 01a0aabb:pausa`
   // answered "Rejected --apply: not an id:estado assignment". Flags belong to the
   // caller, and rejecting them warns on every legitimate invocation. Triage had been
   // stripping them first; adopt was not.
