@@ -62,6 +62,7 @@ import {
   buildHandoffMessage,
 } from "./handoff.ts";
 import { uniqueAbbreviations, abbrevOf, idFromFilename } from "./ids.ts";
+import { renderCloseCall, renderMarkCall, renderToolResultLine } from "./render.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -559,22 +560,24 @@ const ScrubMarkParams = Type.Object({
   reason: Type.Optional(Type.String()),
 });
 
-// `details: undefined`, not `{}`: the contract asks for `undefined` when a result carries no
-// structured details, and an empty object is a shape a renderer will try to read.
-function toolResult(text: string): {
+// `details` carries the structured outcome (`{ ok }`) the tool result renderer reads for its
+// tone; an empty `{}` is a shape the contract forbids (spec S5.4) and a renderer would try to read.
+// `ok` defaults to true so a call site that does not model an outcome — none exists today —
+// does not flip the renderer into the warning tone by accident.
+function toolResult(text: string, ok = true): {
   content: [{ type: "text"; text: string }];
-  details: undefined;
+  details: { ok: boolean };
 } {
-  return { content: [{ type: "text" as const, text }], details: undefined };
+  return { content: [{ type: "text" as const, text }], details: { ok } };
 }
 
 async function handleScrubMark(
   pi: ExtensionAPI,
   params: Static<typeof ScrubMarkParams>,
   ctx: ExtensionContext,
-): Promise<{ content: [{ type: "text"; text: string }]; details: undefined }> {
+): Promise<{ content: [{ type: "text"; text: string }]; details: { ok: boolean } }> {
   if (!isVerdict(params.verdict)) {
-    return toolResult(`Invalid verdict. Use one of: keep, paused, finished, ephemeral, trash.`);
+    return toolResult(`Invalid verdict. Use one of: keep, paused, finished, ephemeral, trash.`, false);
   }
   // The name is the single carrier (see name.ts resolveVerdict). Writing a verdict entry
   // for a session that already declares a state would leave two records disagreeing, and
@@ -585,11 +588,12 @@ async function handleScrubMark(
     return toolResult(
       `This session already declares its state as "${currentName}". The name is the record; ` +
         `use scrub_close to change it. Nothing was written.`,
+      false,
     );
   }
   const liveFile = ctx.sessionManager.getSessionFile();
   if (liveFile === undefined) {
-    return toolResult("No live session file; verdict not recorded.");
+    return toolResult("No live session file; verdict not recorded.", false);
   }
   // `pi.appendEntry` writes through the live session's own manager, so the entry lands in
   // memory and on disk together. Opening a second SessionManager on the same file (what
@@ -602,9 +606,9 @@ async function handleScrubMark(
       at: new Date().toISOString(),
       reason: params.reason,
     });
-    return toolResult(`Recorded verdict: ${params.verdict}.`);
+    return toolResult(`Recorded verdict: ${params.verdict}.`, true);
   } catch (err) {
-    return toolResult(`Could not record verdict: ${errorMessage(err)}`);
+    return toolResult(`Could not record verdict: ${errorMessage(err)}`, false);
   }
 }
 
@@ -635,9 +639,9 @@ function handleScrubClose(
   try {
     pi.setSessionName(name);
   } catch (err) {
-    return toolResult(`Could not set the session name: ${errorMessage(err)}`);
+    return toolResult(`Could not set the session name: ${errorMessage(err)}`, false);
   }
-  return toolResult(`Session name set: ${name}`);
+  return toolResult(`Session name set: ${name}`, true);
 }
 
 const HANDOFF_CUSTOM_TYPE = "session-scrub/handoff";
@@ -1982,7 +1986,7 @@ export default function (pi: ExtensionAPI): void {
       await handleScrubAdopt(args, ctx);
     },
   });
-  pi.registerTool({
+  pi.registerTool<typeof ScrubMarkParams, { ok: boolean }>({
     name: "scrub_mark",
     label: "Record session verdict",
     description:
@@ -1997,6 +2001,10 @@ export default function (pi: ExtensionAPI): void {
       idempotentHint: false,
       openWorldHint: false,
     },
+    // Painted through theme tokens only (S7): the renderers delegate to the host-free
+    // render module so the visible output stays testable without the host.
+    renderCall: (args, theme) => renderMarkCall(args, theme),
+    renderResult: (result, options, theme) => renderToolResultLine(result, options, theme),
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
       return handleScrubMark(pi, params, ctx);
     },
@@ -2008,7 +2016,7 @@ export default function (pi: ExtensionAPI): void {
       await handleScrubHandoff(pi, args, ctx);
     },
   });
-  pi.registerTool({
+  pi.registerTool<typeof ScrubCloseParams, { ok: boolean }>({
     name: "scrub_close",
     label: "Close this work block",
     description:
@@ -2039,6 +2047,9 @@ export default function (pi: ExtensionAPI): void {
       idempotentHint: true,
       openWorldHint: false,
     },
+    // Same delegation as scrub_mark; the close result's tone follows its details.ok too.
+    renderCall: (args, theme) => renderCloseCall(args, theme),
+    renderResult: (result, options, theme) => renderToolResultLine(result, options, theme),
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       return handleScrubClose(pi, params);
     },
