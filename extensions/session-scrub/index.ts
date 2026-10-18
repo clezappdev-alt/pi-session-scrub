@@ -18,6 +18,7 @@ import {
 import { Type, type Static } from "typebox";
 import {
   SessionManager,
+  withFileMutationQueue,
   type ExtensionAPI,
   type ExtensionCommandContext,
   type ExtensionContext,
@@ -558,17 +559,20 @@ const ScrubMarkParams = Type.Object({
   reason: Type.Optional(Type.String()),
 });
 
+// `details: undefined`, not `{}`: the contract asks for `undefined` when a result carries no
+// structured details, and an empty object is a shape a renderer will try to read.
 function toolResult(text: string): {
   content: [{ type: "text"; text: string }];
-  details: Record<string, never>;
+  details: undefined;
 } {
-  return { content: [{ type: "text" as const, text }], details: {} };
+  return { content: [{ type: "text" as const, text }], details: undefined };
 }
 
 async function handleScrubMark(
+  pi: ExtensionAPI,
   params: Static<typeof ScrubMarkParams>,
   ctx: ExtensionContext,
-): Promise<{ content: [{ type: "text"; text: string }]; details: Record<string, never> }> {
+): Promise<{ content: [{ type: "text"; text: string }]; details: undefined }> {
   if (!isVerdict(params.verdict)) {
     return toolResult(`Invalid verdict. Use one of: keep, paused, finished, ephemeral, trash.`);
   }
@@ -587,8 +591,12 @@ async function handleScrubMark(
   if (liveFile === undefined) {
     return toolResult("No live session file; verdict not recorded.");
   }
+  // `pi.appendEntry` writes through the live session's own manager, so the entry lands in
+  // memory and on disk together. Opening a second SessionManager on the same file (what
+  // this used to do) wrote disk only: the running session kept a branch without the
+  // verdict until a reload, and two writers could interleave on one file.
   try {
-    SessionManager.open(liveFile).appendCustomEntry(VERDICT_CUSTOM_TYPE, {
+    pi.appendEntry(VERDICT_CUSTOM_TYPE, {
       version: 1,
       verdict: params.verdict,
       at: new Date().toISOString(),
@@ -720,6 +728,7 @@ const hintedSessions = new Set<string>();
 
 /** Returns true when the hint was offered. Never throws outward. */
 async function maybeOfferHint(
+  pi: ExtensionAPI,
   ctx: ExtensionContext,
   texts: string[],
 ): Promise<boolean> {
@@ -737,7 +746,7 @@ async function maybeOfferHint(
     hintedSessions.add(sessionId);
     const liveFile = ctx.sessionManager.getSessionFile();
     if (liveFile === undefined) return true;
-    SessionManager.open(liveFile).appendCustomEntry(HINT_CUSTOM_TYPE, {
+    pi.appendEntry(HINT_CUSTOM_TYPE, {
       version: 1,
       slug,
       offeredAt: new Date().toISOString(),
@@ -766,15 +775,16 @@ function agentMessageTexts(messages: unknown): string[] {
   return out;
 }
 
-async function handleAgentStart(ctx: ExtensionContext): Promise<void> {
-  await maybeOfferHint(ctx, userTexts(ctx.sessionManager.getEntries()));
+async function handleAgentStart(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+  await maybeOfferHint(pi, ctx, userTexts(ctx.sessionManager.getEntries()));
 }
 
 async function handleAgentEnd(
+  pi: ExtensionAPI,
   event: { messages: unknown },
   ctx: ExtensionContext,
 ): Promise<void> {
-  await maybeOfferHint(ctx, agentMessageTexts(event.messages));
+  await maybeOfferHint(pi, ctx, agentMessageTexts(event.messages));
 }
 
 const TRIAGE_VERDICT = {
@@ -1178,19 +1188,24 @@ async function appendVerdictToOther(
   if ((verdict as string) === (VERDICTS.trash as string)) {
     throw new Error("refusing trash verdict from triage");
   }
-  // Defense in depth: resolve ran before the human confirm, so re-assert
-  // liveness here — never write into a gone file or the live session.
-  if (!existsSync(sessionPath)) {
-    throw new Error("refusing verdict: session file is gone");
-  }
-  if (livePath !== undefined && samePath(sessionPath, livePath)) {
-    throw new Error("refusing verdict: target is the live session");
-  }
-  SessionManager.open(sessionPath).appendCustomEntry(VERDICT_CUSTOM_TYPE, {
-    version: 1,
-    verdict,
-    at: new Date().toISOString(),
-    reason,
+  // The whole check-then-write runs inside the host's file mutation queue for this path:
+  // the guards below are only worth anything if nothing can slip between them and the
+  // append, and this is the plugin's own read-modify-write on a file it does not own.
+  await withFileMutationQueue(sessionPath, async () => {
+    // Defense in depth: resolve ran before the human confirm, so re-assert
+    // liveness here — never write into a gone file or the live session.
+    if (!existsSync(sessionPath)) {
+      throw new Error("refusing verdict: session file is gone");
+    }
+    if (livePath !== undefined && samePath(sessionPath, livePath)) {
+      throw new Error("refusing verdict: target is the live session");
+    }
+    SessionManager.open(sessionPath).appendCustomEntry(VERDICT_CUSTOM_TYPE, {
+      version: 1,
+      verdict,
+      at: new Date().toISOString(),
+      reason,
+    });
   });
 }
 
@@ -1230,26 +1245,32 @@ async function appendNameToOther(
   // Defense in depth mirroring appendVerdictToOther: resolve ran before the
   // human confirm, so re-assert liveness here — never write into a gone
   // file or the live session. Append-only; never touches message content.
-  if (!existsSync(sessionPath)) {
-    throw new Error("refusing name write: session file is gone");
-  }
-  if (livePath !== undefined && samePath(sessionPath, livePath)) {
-    throw new Error("refusing name write: target is the live session");
-  }
+  // Guard, snapshot, backup, append and verify all run inside the host's file mutation
+  // queue for this path. Interleaving is exactly the failure this ordering exists to
+  // survive, and an ordering two callers can enter at once is not that ordering.
+  let backupPath = "";
+  await withFileMutationQueue(sessionPath, async () => {
+    if (!existsSync(sessionPath)) {
+      throw new Error("refusing name write: session file is gone");
+    }
+    if (livePath !== undefined && samePath(sessionPath, livePath)) {
+      throw new Error("refusing name write: target is the live session");
+    }
 
-  const before = snapshotFile(sessionPath);
-  if (!before.parsed) {
-    throw new Error("refusing name write: file does not look like a session file");
-  }
-  const backupPath = backupSessionFile(sessionPath, backupDir);
-  SessionManager.open(sessionPath).appendSessionInfo(name);
+    const before = snapshotFile(sessionPath);
+    if (!before.parsed) {
+      throw new Error("refusing name write: file does not look like a session file");
+    }
+    backupPath = backupSessionFile(sessionPath, backupDir);
+    SessionManager.open(sessionPath).appendSessionInfo(name);
 
-  // A failed post-write check is surfaced, never counted as applied. The backup path
-  // travels in the error because at that point the file on disk is the unknown one.
-  const check = verifyAdoption(before, snapshotFile(sessionPath), name);
-  if (!check.ok) {
-    throw new Error(`write did not verify: ${check.cause} (backup: ${backupPath})`);
-  }
+    // A failed post-write check is surfaced, never counted as applied. The backup path
+    // travels in the error because at that point the file on disk is the unknown one.
+    const check = verifyAdoption(before, snapshotFile(sessionPath), name);
+    if (!check.ok) {
+      throw new Error(`write did not verify: ${check.cause} (backup: ${backupPath})`);
+    }
+  });
   return { backupPath };
 }
 
@@ -1967,8 +1988,17 @@ export default function (pi: ExtensionAPI): void {
     description:
       "Record a session-scrub verdict (keep, paused, finished, ephemeral, trash) for the current session.",
     parameters: ScrubMarkParams,
+    // Declared because the defaults are the worst case: without hints a permission
+    // extension must assume a tool that is not read-only, may destroy data, and reaches
+    // an open world. This one only appends an entry to its own session.
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
-      return handleScrubMark(params, ctx);
+      return handleScrubMark(pi, params, ctx);
     },
   });
   pi.registerCommand("scrub-handoff", {
@@ -2000,14 +2030,23 @@ export default function (pi: ExtensionAPI): void {
       "between the next session dumping the whole project and finding the context in one " +
       "search. A title that describes a discovery instead of a state works against it.",
     parameters: ScrubCloseParams,
+    // Naming overwrites: the previous name is gone, which is "may delete or overwrite
+    // data, rather than only add to it". Repeating the call with the same state and text
+    // lands on the same name, so it is idempotent.
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       return handleScrubClose(pi, params);
     },
   });
   pi.on("agent_start", async (_event, ctx) => {
-    await handleAgentStart(ctx);
+    await handleAgentStart(pi, ctx);
   });
   pi.on("agent_end", async (event, ctx) => {
-    await handleAgentEnd(event, ctx);
+    await handleAgentEnd(pi, event, ctx);
   });
 }
