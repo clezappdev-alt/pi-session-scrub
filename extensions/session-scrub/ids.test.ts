@@ -130,7 +130,7 @@ test("abbrevOf falls back to the plain short form for an unknown id", () => {
 const FILENAME = "2026-10-16T10-33-22-101Z_01a14446-05b5-732c-b3f0-e266977e9bbc.jsonl";
 
 test("the id comes from after the separator, not from the front of the name", () => {
-  // The bug this pins: `/scrub-restore` used the first eight characters of the basename,
+  // The bug this pins: `/scrub:restore` used the first eight characters of the basename,
   // which are the date. Every session trashed the same day rendered as `2026-10-`.
   assert.equal(idFromFilename(FILENAME), "01a14446-05b5-732c-b3f0-e266977e9bbc");
   assert.equal(

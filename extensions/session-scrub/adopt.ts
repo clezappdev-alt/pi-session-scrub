@@ -340,7 +340,7 @@ export function parseAssignments(args: string): {
   const seen = new Set<string>();
   let cursor = 0;
   // Rejected per token, and never for a flag. A token beginning with `-` belongs to the
-  // caller: `/scrub-adopt --apply 01a1:pausa` is a legitimate invocation, and rejecting
+  // caller: `/scrub:adopt --apply 01a1:pausa` is a legitimate invocation, and rejecting
   // `--apply` as a malformed assignment warned on every real run. Triage had been
   // stripping flags before parsing; adopt was passing them straight through.
   const rejectGap = (gap: string): void => {

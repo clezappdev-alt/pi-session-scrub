@@ -34,7 +34,7 @@ export function getTrashDir(sessionDir: string): string {
  * Backups get their own root, a sibling of the trash dir, and never a directory inside it.
  *
  * This is load-bearing, not tidiness. The trash dir holds sessions that were *moved*
- * there and that `/scrub-restore` lists and moves back; a backup copy sitting in that
+ * there and that `/scrub:restore` lists and moves back; a backup copy sitting in that
  * directory would be offered for restore, and restoring it would overwrite the very file
  * it was taken from. Both roots also stay outside `sessions/`, where Pi could otherwise
  * mistake a stray file for a live session.

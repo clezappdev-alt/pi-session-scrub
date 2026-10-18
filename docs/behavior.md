@@ -774,7 +774,7 @@ first user text.
 1. The status key is `STATUS_KEY`, whose value is
    `"scrub:name"` (`index.ts:66`),
    and it is used by `ctx.ui.setStatus(` (`index.ts:704`). The status text is
-   Spanish by design.
+   English, like the rest of the plugin's user-facing copy.
 2. The session id is added to `hintedSessions` — the
    in-process gate — at the same step as the earlier persistent-branch add
    (`hintedSessions.add(sessionId);` `index.ts:699-705`).
