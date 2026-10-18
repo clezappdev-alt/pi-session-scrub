@@ -1351,7 +1351,15 @@ async function gatherTriageCandidates(ctx: ExtensionCommandContext): Promise<{
       (live.id !== undefined && info.id === live.id);
     if (isLive) continue;
     const entries = openSessionEntries(info.path);
-    if (readLatestVerdict(entries) !== undefined) continue;
+    // Resolved, not raw. A name carrying a state prefix IS that session's verdict — the
+    // single carrier — so a session named `hecho:` is not verdict-less and has no business
+    // being offered for a verdict it already derives. Reading the entry raw made triage
+    // offer sessions that /scrub had just shown as named-protected: 7 of 52 in a real
+    // project, every one of them already declaring its state.
+    //
+    // Cost, accepted: those sessions lose triage's rename path. The name is written by a
+    // human through /name or Ctrl+R, which is what the design says anyway.
+    if (resolveVerdict(info.name ?? "", readLatestVerdict(entries)) !== undefined) continue;
     if (info.messageCount === 0) {
       emptySkipped += 1;
       continue;
@@ -1978,6 +1986,10 @@ export default function (pi: ExtensionAPI): void {
       "state: pausa (here, next step known), abierto (here, unknown), " +
       "espera (blocked elsewhere), traspaso (continues in another session), " +
       "hecho (finished). " +
+      "traspaso commits you to more than a name: tell the user to run /scrub-handoff, " +
+      "because that command is what actually creates the continuation and only they can " +
+      "run it. A traspaso with no handoff leaves /resume promising a continuation that " +
+      "never existed, which is worse than no name because it is trusted. " +
       "text is read by a human scanning /resume, so: the NEXT step in plain words, " +
       "not what you implemented, not symbol names, not an API call. One glanceable line. " +
       "If a state word would contradict the text — a 'pausa:' whose text says the work " +
