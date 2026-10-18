@@ -141,5 +141,7 @@ does not have to infer where each decision belongs.
 3. §4's invariants are present in the spec delta with scenario coverage.
 4. §5's open questions are recorded against their artifacts, with no silent resolution.
 
-Remaining tasks in this change: T2 behaviour documentation, T3 open-question
-resolution, T4 design, T5 implementation and verification.
+Remaining tasks in this change: the session-name convention (slice A) is built and
+covered by tests; naming the live session, the executable traspaso, and bulk
+sanitization remain open. The task naming drifted after T2 — see
+`design.md` § Slices for the slicing that is actually in force.
