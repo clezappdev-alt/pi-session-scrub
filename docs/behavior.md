@@ -2,6 +2,9 @@
 
 **Status:** as-built documentation, derived from source only.
 **Reflects:** released behavior at `v0.3.0` (`3dd6361`). **Refreshed at each tag**, not per commit.
+**Current gap:** HEAD is 54 commits ahead of that tag; the surfaces and predicate
+changes added since then are listed as a boundary in [§12](#12-added-after-this-snapshot--not-described-here),
+not described as behavior.
 **Source of truth:** `extensions/session-scrub/index.ts` @ `c34b1d6`, 1682 lines.
 Every behavioral claim below carries a `path:line` citation to that file. Where a
 claim could not be verified from the source, it is written as
@@ -49,9 +52,12 @@ Line-number anchors re-derived from the file during this write:
 
 ## 0. Registration surface
 
-Five commands and one tool are registered, and nothing else is registered
+Five commands and one tool are registered **in the release this document
+reflects** (`v0.3.0`); nothing else is registered there
 (`export default function (pi: ExtensionAPI)` at
-`extensions/session-scrub/index.ts:1635-1682`):
+`extensions/session-scrub/index.ts:1635-1682`). Two further commands and one
+further tool were added after this snapshot and are **not** described here —
+see [§12](#12-added-after-this-snapshot--not-described-here):
 
 Each registration is quoted with its literal command name and description; the
 handler definitions are cited in their own sections.
@@ -1166,24 +1172,30 @@ every case below.
    code's two-levels-up arithmetic only if `getSessionDir()` really is
    `sessions/--<project>--/` — see the UNVERIFIED in §8.
 
-## 12. Not implemented yet
+## 12. Added after this snapshot — not described here
 
-The session-naming capability is **not implemented**. Nothing in §§0–11 describes
-it as current behavior. The following is scope, drawn from the proposed change
-(`openspec/changes/session-scrub-naming/proposal.md`, status `proposed`) and
-recorded here **only** to mark the boundary — none of it is behavior today:
+**Status correction (2026-10-22).** This document reflects `v0.3.0`; HEAD is 54
+commits ahead. The naming capability this section used to call unimplemented
+**has since shipped**, and so have surfaces this snapshot never knew about.
+Nothing in §§0–11 describes them, and this section does not describe them
+either: it marks the boundary, so the absence is not read as a claim of
+nonexistence.
 
-- Making naming a plugin capability rather than a manual `/resume` + `/name`
-  round-trip (proposal §1), which would supersede the REQ-09 prohibition on
-  programmatic naming.
-- Any LLM-generated or programmatic name-setting call. Today the only
-  `appendSessionInfo` call site is the consented triage rename
-  (`index.ts:1182`), and the hint path has none.
-- A picker, a guard mechanism, or a confirmation UX — the proposal states these
-  are deferred to its own spec delta and are unspecified.
-- Any change to the classification predicate. Today's predicate is the one
-  documented in §1, including the unnamed-session behavior the proposal
-  questions.
+Shipped after this snapshot, not described here:
+
+- The session-naming convention (`pausa` / `abierto` / `espera` / `traspaso` /
+  `hecho`), the `scrub_close` tool that names the live session, and
+  `/scrub:handoff`, which creates the announced continuation. Source change:
+  `openspec/changes/session-scrub-naming/`.
+- `/scrub:adopt`, which applies the convention to sessions that predate it, with
+  a per-file backup and an mtime guard. **No canonical change describes it yet.**
+- The classifier reordering and the conversation-turn floor (`NM-04`/`NM-05`),
+  which change the predicate documented in §1: an explicit `keep`/`paused`
+  verdict now protects an old or empty unnamed session, and an unnamed session
+  with 5 or more conversation turns is never a candidate for being unnamed.
+
+The scope list this section used to carry — what naming *would* be — is
+superseded by the shipped behavior above, not deferred.
 
 ## 13. Observed population evidence (not guarantees)
 
