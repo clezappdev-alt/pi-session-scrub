@@ -209,10 +209,13 @@ is read.
    (`getTrashDir(ctx.sessionManager.getSessionDir())` `index.ts:567`) and loop
    the actionable set **in audit order** (`const a of actionable` `index.ts:569`).
 6. Per item: `ctx.ui.confirm` with `"Trash session <id8>?"` and a body built by
-   `formatTrashConfirmBody` (`render.ts:143-145`, called at `index.ts:487`): the
+   `formatTrashConfirmBody` (`render.ts:147-151`, called at `index.ts:487`): the
    audit line and, when present, the detail share the first line, and
    `"Move is reversible via /scrub:restore."` always begins its own line — for a
    plain `candidate` the sentence can never read as glued to the reason. The
+   separator between the audit line and the detail belongs to the renderer, not
+   to the caller, so a detail fragment that arrives without its own leading space
+   is still separated instead of gluing onto the reason. The
    detail exists only for `old-needs-confirm` and carries the first 80 chars of
    the first message and the modified ISO timestamp
    (`const detail =` `index.ts:481-484`).
@@ -221,7 +224,7 @@ is read.
    at `warning` (`index.ts:582-584`). The loop continues.
 8. Re-lists with `SessionManager.list(ctx.cwd)` and reports, pluralized,
    `Trashed <n> session(s). Remaining: <r>.` (`formatTrashResult`
-   `render.ts:148-151`, called at `index.ts:498`; singular for one session).
+   `render.ts:159-161`, called at `index.ts:498`; singular for one session).
 
 **Non-TUI (`print` / `json` / `rpc`) behavior.** `resolveDryRun` is true whenever
 `!(mode === "tui" && hasUI)` (`isInteractive` `index.ts:317-319`), so every
@@ -238,7 +241,7 @@ double-moved; with nothing left actionable the run terminates at
 `actionable.length === 0` (`index.ts:555-558`) with `Nothing to trash.`
 If the whole set was declined the counter never increments
 (`let trashed = 0` `index.ts:479`) and the run still reports pluralized
-`Trashed <n> session(s). Remaining: <r>.` (`formatTrashResult` `render.ts:148-151`).
+`Trashed <n> session(s). Remaining: <r>.` (`formatTrashResult` `render.ts:159-161`).
 
 **Error / edge paths.**
 
@@ -291,7 +294,7 @@ silently ignored. This is a real as-built behavior, not a spec intention.
    `Skipped ${basename(p)}: ${errorMessage(err)}` at `warning`
    (`ctx.ui.notify(` `index.ts:616-617`) and the loop continues.
 6. `notify` with the pluralized `Restored <n> session(s).` at `info`
-   (`formatRestoreResult` `render.ts:154-156`, called at `index.ts:536`; singular
+   (`formatRestoreResult` `render.ts:164-166`, called at `index.ts:536`; singular
    for one session).
 
 **Idempotency.** Restoring removes the file from the trash listing, so a second
@@ -473,12 +476,12 @@ text never leaks into assignment tokens or leftovers.
   `msgs, no signal — words decide; park only if tail agrees`
   (`index.ts:961`).
 - `machine` rows render as **compact one-liners** by default
-  (`function formatCompactRow` `render.ts:117-135`, a host-free pure renderer
+  (`function formatCompactRow` `render.ts:117-136`, a host-free pure renderer
   pinned by `render.test.ts`), emitted at
   (`formatCompactRow({` `index.ts:1447`) with the schema
   `<short> · <n>msgs · <d>d · named "<name>"|unnamed · <head≤121>`,
-  built by `const named =` (`render.ts:126`); the head slice is 120
-  chars plus `…` (`args.head.length > COMPACT_HEAD_MAX` `render.ts:131-133`).
+  built by `const named =` (`render.ts:124`); the head slice is 120
+  chars plus `…` (`args.head.length > COMPACT_HEAD_MAX` `render.ts:129-131`).
   The row has **no weak-guess field**: it only ever renders machine-grade rows,
   whose proposal is the fact `keep`, so a guess there could only ever print a
   misleading guess. The guess stays where it belongs — on the human-grade packs
