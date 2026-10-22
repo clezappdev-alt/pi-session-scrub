@@ -199,13 +199,13 @@ declare function handleScrubMark(input: {
 - Usage: `/scrub-apply [--dry-run]`.
 - Actionable set = `auto-deletable` + `candidate` + `old-needs-confirm` (old rows carry full `SessionDetail`).
 - `dryRun` is true when `--dry-run` passed OR NOT (`mode === "tui" && hasUI`). Dry-run path: `notify(info)` full candidate list, exit, zero mutations.
-- TUI path: per-item `confirm()` loop over the actionable set; empty selection → `notify("Cancelled.", info)`, exit; confirmed selection → `moveToTrash` per file (per-file error notify, continue); post-run re-list + `notify(info, "Trashed X … Remaining: Y …")`.
+- TUI path: per-item `confirm()` loop over the actionable set; empty selection → `notify("Cancelled.", info)`, exit; confirmed selection → `moveToTrash` per file (per-file error notify, continue); post-run re-list + `notify(info, "Trashed <N> session(s). Remaining: <Y>.")` — pluralized, singular for one session.
 - Execution uses `moveToTrash` (rename, auto-mkdir) with per-file error reporting and no copy/unlink fallback.
 
 ### `/scrub-restore` — restore from plugin trash
 - Usage: `/scrub-restore` (no flags).
 - Lists files in `getTrashDir()` contents; empty/missing dir → `notify(info, "No trashed sessions for this project.")`, exit.
-- Non-TUI: notify list only. TUI: per-item `confirm()` loop → `moveFromTrash` per file (mkdir sessions dir, never overwrite existing target, per-file catch + continue) → post-run `notify(info, "Restored X sessions.")`.
+- Non-TUI: notify list only. TUI: per-item `confirm()` loop → `moveFromTrash` per file (mkdir sessions dir, never overwrite existing target, per-file catch + continue) → post-run `notify(info, "Restored <N> session(s).")` — pluralized, singular for one session.
 - Manual path (README): `mv <trashDir>/<session>.jsonl <sessionsDir>/<session>.jsonl`.
 
 ### `/scrub-init` — write POLICY block
@@ -555,7 +555,7 @@ The system MUST compose phase-1 page 1 as WEAK-first + machine fill to cap `MAX_
 
 ### UX-02 — Compact table default with `--verbose` full packs
 
-The system MUST render phase 1 as a compact table by default with schema `<short> · <msgs>msgs · <age>d · [named "<name>" | unnamed] · <weak-guess> · <head-first-~120c>` (prefix of the already-built head sliced to 120 chars + `…` when longer, `escapeQuote` on render; name via `named "<escapeQuote(name)>"`, else literal `unnamed`). Default (no flag): compact rows for shown machine sessions + full `formatDigestPack` blocks for shown WEAK sessions only, zero machine full packs. `--verbose`: compact table always present + full packs for every shown session. Full-pack-only content (full 300c head, 300c chronological tail, ISO created/modified, rationale stubs) MUST never appear in compact rows. Flag parsed as `verbose = args.split(/\s+/).includes("--verbose")`, threaded into phase 1 and phase-2 echo; `--verbose` added to the parse-cleaning strip list. Supersedes TR-02/TR-06 full-pack-per-session default.
+The system MUST render phase 1 as a compact table by default with schema `<short> · <msgs>msgs · <age>d · [named "<name>" | unnamed] · <head-first-~120c>` (prefix of the already-built head sliced to 120 chars + `…` when longer, `escapeQuote` on render; name via `named "<escapeQuote(name)>"`, else literal `unnamed`). The compact row MUST carry NO weak-guess field: it only ever renders machine-grade rows, whose proposal is the fact `keep` (TR-04), so a guess column could only ever print a misleading guess — the weak guess is human-grade only, rendered by the `weak-guess:` line of `formatDigestPack`. Default (no flag): compact rows for shown machine sessions + full `formatDigestPack` blocks for shown WEAK sessions only, zero machine full packs. `--verbose`: compact table always present + full packs for every shown session. Full-pack-only content (full 300c head, 300c chronological tail, ISO created/modified, rationale stubs) MUST never appear in compact rows. Flag parsed as `verbose = args.split(/\s+/).includes("--verbose")`, threaded into phase 1 and phase-2 echo; `--verbose` added to the parse-cleaning strip list. Supersedes TR-02/TR-06 full-pack-per-session default.
 
 #### Scenario: default run shows machine table plus WEAK packs
 - GIVEN 3 machine-keeps and 2 WEAK sessions

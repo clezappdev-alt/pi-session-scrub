@@ -23,6 +23,14 @@ export interface RenderTheme {
 /** One-line preview budget. Truncation happens on the RAW string before painting, so no escape sequence is ever measured. */
 const PREVIEW_MAX = 60;
 
+/** Compact-row head budget: 120 raw characters plus the ellipsis when something was cut. */
+const COMPACT_HEAD_MAX = 120;
+
+/** Escape backslashes and double quotes so the value cannot close its own quoting. */
+export function escapeQuote(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 /** Cut the raw preview text to PREVIEW_MAX characters, appending the ellipsis only when something was cut. */
 function preview(raw: string): string {
   if (raw.length <= PREVIEW_MAX) {
@@ -95,4 +103,55 @@ export function renderToolResultLine(
     ? theme.fg("success", "✓ ") + theme.fg("muted", text)
     : theme.fg("warning", text);
   return singleLine(line);
+}
+
+// --- Operator-facing text (pure, pinned by render.test.ts; index.ts only wires them) ---
+
+/**
+ * Compact one-liner per machine-grade session (UX-02 schema, F2). The weak guess is
+ * deliberately ABSENT: this row only ever renders machine-grade rows, whose proposal is
+ * the fact `keep`, so a guess column could only ever print a misleading guess. The weak
+ * guess lives on in the human-grade packs (formatDigestPack's weak branch).
+ * head is a prefix of the already-built pack head — no new extraction.
+ */
+export function formatCompactRow(args: {
+  shortId: string;
+  messageCount: number;
+  ageDays: number;
+  sessionName?: string;
+  head: string;
+}): string {
+  const named =
+    args.sessionName !== undefined && args.sessionName.trim().length > 0
+      ? `named "${escapeQuote(args.sessionName)}"`
+      : "unnamed";
+  const headSlice =
+    args.head.length > COMPACT_HEAD_MAX
+      ? `${args.head.slice(0, COMPACT_HEAD_MAX)}…`
+      : args.head;
+  return (
+    `${args.shortId} · ${args.messageCount}msgs · ${args.ageDays}d · ` +
+    `${named} · ${escapeQuote(headSlice)}`
+  );
+}
+
+/**
+ * Confirm body for the per-item trash loop (N3). The audit line and the
+ * old-session detail stay on the first line; the reversal sentence gets its
+ * own line so it can never read as glued to a reason or a detail fragment.
+ */
+export function formatTrashConfirmBody(auditLine: string, detail: string): string {
+  return `${auditLine}${detail}\nMove is reversible via /scrub:restore.`;
+}
+
+/** Pluralized post-run line of /scrub-apply (N4): `Trashed <n> session(s). Remaining: <r>.` */
+export function formatTrashResult(count: number, remaining: number): string {
+  const plural = count === 1 ? "" : "s";
+  return `Trashed ${count} session${plural}. Remaining: ${remaining}.`;
+}
+
+/** Pluralized post-run line of /scrub-restore (N4): `Restored <n> session(s).` */
+export function formatRestoreResult(count: number): string {
+  const plural = count === 1 ? "" : "s";
+  return `Restored ${count} session${plural}.`;
 }
