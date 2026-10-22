@@ -208,17 +208,20 @@ is read.
 5. Otherwise compute `trashDir = getTrashDir(ctx.sessionManager.getSessionDir())`
    (`getTrashDir(ctx.sessionManager.getSessionDir())` `index.ts:567`) and loop
    the actionable set **in audit order** (`const a of actionable` `index.ts:569`).
-6. Per item: `ctx.ui.confirm` with `"Trash session <id8>?"`, the audit line, the
-   detail, and `"Move is reversible via /scrub:restore."`
-   (`ctx.ui.confirm(` `index.ts:574-577`).
-   For `old-needs-confirm` the detail additionally carries the first 80 chars of
+6. Per item: `ctx.ui.confirm` with `"Trash session <id8>?"` and a body built by
+   `formatTrashConfirmBody` (`render.ts:143-145`, called at `index.ts:487`): the
+   audit line and, when present, the detail share the first line, and
+   `"Move is reversible via /scrub:restore."` always begins its own line — for a
+   plain `candidate` the sentence can never read as glued to the reason. The
+   detail exists only for `old-needs-confirm` and carries the first 80 chars of
    the first message and the modified ISO timestamp
-   (`const detail =` `index.ts:570-573`).
+   (`const detail =` `index.ts:481-484`).
 7. On confirm, `moveToTrash(a.info.path, trashDir)` (`index.ts:580`); any throw is
    caught per file and reported as `Skipped ${a.info.id.slice(0, 8)}: <message>`
    at `warning` (`index.ts:582-584`). The loop continues.
-8. Re-lists with `SessionManager.list(ctx.cwd)` and reports
-   `Trashed ${trashed} sessions. Remaining: ${relisted.length}.` (`index.ts:586-587`).
+8. Re-lists with `SessionManager.list(ctx.cwd)` and reports, pluralized,
+   `Trashed <n> session(s). Remaining: <r>.` (`formatTrashResult`
+   `render.ts:148-151`, called at `index.ts:498`; singular for one session).
 
 **Non-TUI (`print` / `json` / `rpc`) behavior.** `resolveDryRun` is true whenever
 `!(mode === "tui" && hasUI)` (`isInteractive` `index.ts:317-319`), so every
@@ -234,8 +237,8 @@ in `SessionManager.list(ctx.cwd)`, so they are neither re-offered nor
 double-moved; with nothing left actionable the run terminates at
 `actionable.length === 0` (`index.ts:555-558`) with `Nothing to trash.`
 If the whole set was declined the counter never increments
-(`let trashed = 0` `index.ts:568`) and the run still reports
-`Trashed ${trashed} sessions. Remaining: ${relisted.length}.` (`index.ts:587`).
+(`let trashed = 0` `index.ts:479`) and the run still reports pluralized
+`Trashed <n> session(s). Remaining: <r>.` (`formatTrashResult` `render.ts:148-151`).
 
 **Error / edge paths.**
 
@@ -287,8 +290,9 @@ silently ignored. This is a real as-built behavior, not a spec intention.
    then `moveFromTrash` (`index.ts:613`) inside try/catch; a throw reports
    `Skipped ${basename(p)}: ${errorMessage(err)}` at `warning`
    (`ctx.ui.notify(` `index.ts:616-617`) and the loop continues.
-6. `notify` with `Restored ${restored} sessions.` at `info`
-   (`index.ts:619`).
+6. `notify` with the pluralized `Restored <n> session(s).` at `info`
+   (`formatRestoreResult` `render.ts:154-156`, called at `index.ts:536`; singular
+   for one session).
 
 **Idempotency.** Restoring removes the file from the trash listing, so a second
 run finds it gone. Verdicts are **not** cleared — restoring only renames the file
@@ -461,7 +465,7 @@ text never leaks into assignment tokens or leftovers.
 
 - `weak` rows render as a full fenced pack with a `weak-guess:` line
   (`function formatDigestPack` `index.ts:1189-1208`, weak branch
-  `weak-guess: ${weak.guess}` `index.ts:1204`).
+  `weak-guess: ${weak.guess}` `index.ts:1305`).
   The guess is `finished` when `ageMs >= MAX_AGE_MS`, else `paused`
   (`function suggestTriageWeak` `index.ts:943-963`), each with an explicit
   "judge from the words, never auto-confirm" style rationale —
@@ -469,35 +473,39 @@ text never leaks into assignment tokens or leftovers.
   `msgs, no signal — words decide; park only if tail agrees`
   (`index.ts:961`).
 - `machine` rows render as **compact one-liners** by default
-  (`function formatCompactRow` `index.ts:1238-1255`), emitted at
-  (`formatCompactRow({` `index.ts:1357`) with the schema
-  `<short> · <n>msgs · <d>d · named "<name>"|unnamed · <weak-guess> · <head≤121>`,
-  built by `const named =` (`index.ts:1246-1250`); the head slice is 120
-  chars plus `…` (`args.head.length > 120` `index.ts:1250`).
+  (`function formatCompactRow` `render.ts:117-135`, a host-free pure renderer
+  pinned by `render.test.ts`), emitted at
+  (`formatCompactRow({` `index.ts:1447`) with the schema
+  `<short> · <n>msgs · <d>d · named "<name>"|unnamed · <head≤121>`,
+  built by `const named =` (`render.ts:126`); the head slice is 120
+  chars plus `…` (`args.head.length > COMPACT_HEAD_MAX` `render.ts:131-133`).
+  The row has **no weak-guess field**: it only ever renders machine-grade rows,
+  whose proposal is the fact `keep`, so a guess there could only ever print a
+  misleading guess. The guess stays where it belongs — on the human-grade packs
+  (`weak-guess:` in `formatDigestPack`'s weak branch) and on `--verbose` full
+  packs.
   Under `--verbose` machine rows additionally get their full fenced packs with
   the `NAMED → keep (machine) · named session — presumed active` line
-  (`verbose) {` `index.ts:1368-1373`),
-  built by `machineFactOf` (`index.ts:1340-1345`), and rendered by
-  the `lines.push(` in that pack (`index.ts:1202`).
-- The machine "proposal" is hardcoded to `TRIAGE_VERDICT.KEEP` (`index.ts:1343`);
-  the weak guess line is still computed and rendered for machine rows in compact
-  form (`weakGuess: guessOf(c).guess` `index.ts:1362`) and in verbose packs.
+  (`verbose) {` `index.ts:1457-1463`),
+  built by `machineFactOf` (`index.ts:1430-1435`), and rendered by
+  the `lines.push(` in that pack (`index.ts:1303`).
+- The machine "proposal" is hardcoded to `TRIAGE_VERDICT.KEEP` (`index.ts:1433`).
 
 **Deferral.** When anything is deferred, a line
 `deferred (<N>): <shortId>, <shortId>, …` is appended
-(`lines.push(` with `deferred.map((c) => shortId(c.info.id))` `index.ts:1375`).
+(`lines.push(` with `deferred.map((c) => abbrevOf(abbrevs, c.info.id))` `index.ts:1464`).
 Deferred rows carry **no packs and no guesses** — only ids, in page order.
 
 **Footer.** Every phase-1 notify ends with an instruction line
-(`'Packs are quoted-as-data` `index.ts:1377`) that names
+(`'Packs are quoted-as-data` `index.ts:1466`) that names
 the `--apply` grammar, the bare `id:keep` machine
 form, `id:name:"slug"`, `--verbose`, `--dry-run`, and states "nothing is written
 by this command".
 
 **Read-only in every mode.** Phase 1 reaches no write, no `mkdirSync`, no
-`confirm`. Its I/O is `SessionManager.list(ctx.cwd)` (`index.ts:1267`) and
-`openSessionEntries(info.path)` (`index.ts:1276`), plus one read of
-`<cwd>/AGENTS.md` that `readPolicyConfig(ctx.cwd)` (`index.ts:1262`) performs
+`confirm`. Its I/O is `SessionManager.list(ctx.cwd)` (`index.ts:1348`) and
+`openSessionEntries(info.path)` (`index.ts:1362`), plus one read of
+`<cwd>/AGENTS.md` that `readPolicyConfig(ctx.cwd)` (`index.ts:1343`) performs
 inside `gatherTriageCandidates` — still a read, never a write.
 
 **Idempotency.** Phase 1 writes nothing, so re-running is stable, because every

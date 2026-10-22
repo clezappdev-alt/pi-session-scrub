@@ -62,7 +62,16 @@ import {
   buildHandoffMessage,
 } from "./handoff.ts";
 import { uniqueAbbreviations, abbrevOf, idFromFilename } from "./ids.ts";
-import { renderCloseCall, renderMarkCall, renderToolResultLine } from "./render.ts";
+import {
+  escapeQuote,
+  formatCompactRow,
+  formatRestoreResult,
+  formatTrashConfirmBody,
+  formatTrashResult,
+  renderCloseCall,
+  renderMarkCall,
+  renderToolResultLine,
+} from "./render.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -475,7 +484,7 @@ async function handleScrubApply(args: string, ctx: ExtensionCommandContext): Pro
         : "";
     const ok = await ctx.ui.confirm(
       `Trash session ${a.shortId}?`,
-      `${formatAuditLine(a)}${detail} Move is reversible via /scrub:restore.`,
+      formatTrashConfirmBody(formatAuditLine(a), detail),
     );
     if (!ok) continue;
     try {
@@ -486,7 +495,7 @@ async function handleScrubApply(args: string, ctx: ExtensionCommandContext): Pro
     }
   }
   const relisted = await SessionManager.list(ctx.cwd);
-  ctx.ui.notify(`Trashed ${trashed} sessions. Remaining: ${relisted.length}.`, "info");
+  ctx.ui.notify(formatTrashResult(trashed, relisted.length), "info");
 }
 
 async function handleScrubRestore(args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -524,7 +533,7 @@ async function handleScrubRestore(args: string, ctx: ExtensionCommandContext): P
       ctx.ui.notify(`Skipped ${basename(p)}: ${errorMessage(err)}`, "warning");
     }
   }
-  ctx.ui.notify(`Restored ${restored} sessions.`, "info");
+  ctx.ui.notify(formatRestoreResult(restored), "info");
 }
 
 async function handleScrubInit(args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -1278,10 +1287,6 @@ async function appendNameToOther(
   return { backupPath };
 }
 
-function escapeQuote(text: string): string {
-  return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
 function formatDigestPack(
   pack: DigestPack,
   machine: MachineFact | undefined,
@@ -1327,27 +1332,6 @@ function partitionTriageCandidates(candidates: TriageCandidate[]): {
  * stored verbatim as reason per file. */
 function bulkKeepRationale(now: Date): string {
   return `machine keep, bulk-confirmed ${now.toISOString().slice(0, 10)}`;
-}
-
-/** Compact one-liner per session (UX-02 schema). head is a prefix of the
- * already-built pack head — no new extraction. */
-function formatCompactRow(args: {
-  shortId: string;
-  messageCount: number;
-  ageDays: number;
-  sessionName?: string;
-  weakGuess: string;
-  head: string;
-}): string {
-  const named =
-    args.sessionName !== undefined && args.sessionName.trim().length > 0
-      ? `named "${escapeQuote(args.sessionName)}"`
-      : "unnamed";
-  const headSlice = args.head.length > 120 ? `${args.head.slice(0, 120)}…` : args.head;
-  return (
-    `${args.shortId} · ${args.messageCount}msgs · ${args.ageDays}d · ` +
-    `${named} · ${args.weakGuess} · ${escapeQuote(headSlice)}`
-  );
 }
 
 async function gatherTriageCandidates(ctx: ExtensionCommandContext): Promise<{
@@ -1465,7 +1449,6 @@ async function handleScrubTriagePhase1(ctx: ExtensionCommandContext, verbose: bo
           messageCount: pack.messageCount,
           ageDays: pack.ageDays,
           sessionName: pack.sessionName,
-          weakGuess: guessOf(c).guess,
           head: pack.head,
         }),
       );
