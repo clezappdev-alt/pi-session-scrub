@@ -91,10 +91,19 @@ palabras, **nunca** una decisión.
 `keep` con la rationale `machine keep, bulk-confirmed <fecha ISO>`
 (`bulkKeepRationale`, `index.ts:1333`).
 
-**Una machine row nunca lleva guess.** La fila compacta sólo renderiza filas `machine`, y su
-propuesta es el hecho `keep`; por eso el campo de guess se quitó del esquema
-(`formatCompactRow`, `render.ts:117`; `spec.md` UX-02). El guess vive donde corresponde: en
-el pack de una fila `weak` (`weak-guess:`, `formatDigestPack`, `index.ts:1290`).
+**La fila compacta de una machine row no lleva guess.** La fila compacta sólo renderiza
+filas `machine`, y su propuesta es el hecho `keep`; por eso el campo de guess se quitó del
+esquema (`formatCompactRow`, `render.ts:117`; `spec.md` UX-02). El guess vive donde
+corresponde: en el pack de una fila `weak` (`weak-guess:`, `formatDigestPack`,
+`index.ts:1290`).
+
+**Queda una excepción, y es deliberada — no la leas como si el problema estuviera resuelto en
+todos lados.** Bajo `--verbose`, una machine row recibe *además* su pack completo, y ese pack
+todavía renderiza la weak guess junto al hecho `NAMED → keep (machine)`
+(`formatDigestPack(pack, machineFactOf(pack), guessOf(c))`, `index.ts:1457-1461`). Es la misma
+tensión que la fila compacta ya resolvió, sin resolver en el pack verboso: el hecho y la
+adivinanza aparecen juntos en el mismo bloque. No se cambió porque esa decisión no estaba
+tomada; es deuda registrada, no comportamiento deseado.
 
 ---
 
