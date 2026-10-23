@@ -1,11 +1,16 @@
 # session-scrub — behavior specification (as-built)
 
 **Status:** as-built documentation, derived from source only.
-**Reflects:** released behavior at `v0.3.0` (`3dd6361`). **Refreshed at each tag**, not per commit.
-**Current gap:** HEAD is 54 commits ahead of that tag; the surfaces and predicate
-changes added since then are listed as a boundary in [§12](#12-added-after-this-snapshot--not-described-here),
+**Reflects:** released behavior at `v0.3.0` (tag commit `1d4b836`), snapshotted at
+`3dd6361` on 2026-10-08 — no executable change landed in between. **Refreshed at each
+tag**, not per commit.
+**Current gap:** HEAD is ahead of that snapshot by a number that grows with every commit;
+count it with `git rev-list --count 3dd6361..HEAD` instead of trusting a fixed figure. The
+surfaces and predicate changes added since then are listed as a boundary in
+[§12](#12-added-after-this-snapshot--not-described-here),
 not described as behavior.
-**Source of truth:** `extensions/session-scrub/index.ts` @ `c34b1d6`, 1682 lines.
+**Source of truth:** `extensions/session-scrub/index.ts` @ `c34b1d6`, 1682 lines — the
+snapshot every `path:line` citation below refers to, never the file at HEAD.
 Every behavioral claim below carries a `path:line` citation to that file. Where a
 claim could not be verified from the source, it is written as
 `UNVERIFIED: <what could not be confirmed, and why>`.
@@ -1174,8 +1179,9 @@ every case below.
 
 ## 12. Added after this snapshot — not described here
 
-**Status correction (2026-10-22).** This document reflects `v0.3.0`; HEAD is 54
-commits ahead. The naming capability this section used to call unimplemented
+**Status correction (2026-10-22).** This document reflects `v0.3.0`, and HEAD is ahead
+of its `3dd6361` snapshot — by how much changes on every commit, so count it rather than
+quoting a number. The naming capability this section used to call unimplemented
 **has since shipped**, and so have surfaces this snapshot never knew about.
 Nothing in §§0–11 describes them, and this section does not describe them
 either: it marks the boundary, so the absence is not read as a claim of
