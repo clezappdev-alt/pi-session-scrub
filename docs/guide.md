@@ -252,7 +252,8 @@ nombres que registra el plugin.)
    toma el texto del nombre actual (sin el prefijo). Si no queda nada, avisa y **no crea
    nada**: un traspaso sin nada que entregar no es un traspaso.
 2. **Renombra la sesión actual** a `traspaso: <id8> · <pendiente>`, sea cual fuere su
-   nombre anterior. Lo hace mientras sigue siendo la sesión actual, así que el picker
+   nombre anterior (`<id8>` son los primeros 8 caracteres del id de la sesión). Lo hace
+   mientras sigue siendo la sesión actual, así que el selector de `/resume` —el *picker*—
    muestra el par, no dos filas idénticas.
 3. **Busca la última memoria escrita** en las entradas persistidas de esta sesión (no en
    una variable en proceso): sólo cuentan las escrituras (`mem_save`, `mem_session_summary`);
@@ -272,10 +273,9 @@ pausa: desde 01a10e25 · implementar el traspaso        ← la nueva, donde segu
 traspaso: 01a10e25 · implementar el traspaso           ← la que entregó el trabajo
 ```
 
-Los dos nombres llevan los primeros 8 caracteres del id de la sesión de origen: sirven
-para reconocer el par sin abrir nada. Si encadenás otro handoff, el marcador viejo se
-quita antes de escribir el nuevo, así el texto no crece como
-`desde a · desde b · desde c`.
+Los dos nombres llevan ese `<id8>` para que puedas reconocer el par sin abrir nada. Si
+encadenás otro handoff, el marcador viejo se quita antes de escribir el nuevo, así el
+texto no crece como `desde a · desde b · desde c`.
 
 ### 6.3 El mensaje con el que arranca la sesión nueva
 
@@ -333,7 +333,7 @@ próxima sesión concreta, no lo corras.
 - **Contexto barato.** El detalle queda en Engram; el mensaje inicial lleva el
   `topic_key` y el título. Unas pocas decenas de tokens, una vez, en lugar del volcado de
   la conversación anterior.
-- **Señal en el picker, no en tu memoria.** El par `traspaso:` / `pausa: desde …` se lee
+- **Señal en el selector, no en tu memoria.** El par `traspaso:` / `pausa: desde …` se lee
   en `/resume` antes de abrir nada: sabés qué sesión entregó y cuál recibió.
 - **Trazabilidad real.** `parentSession` vincula las dos sesiones en Pi, y el id corto en
   ambos nombres hace visible el vínculo en el selector.
@@ -416,5 +416,5 @@ próxima sesión concreta, no lo corras.
 | [`../README.md`](../README.md) | Instalación, flags y comportamiento público del paquete. |
 | [`behavior.md`](behavior.md) | Especificación as-built citada a `index.ts` línea por línea (hasta `v0.3.0`). |
 | [`glossary.md`](glossary.md) | Vocabulario compartido, un término por línea, con su lugar en el código. |
-| [`../../PRD.md`](../PRD.md) | El problema que el plugin existe para resolver. |
+| [`../PRD.md`](../PRD.md) | El problema que el plugin existe para resolver. |
 | [`../openspec/changes/session-scrub-naming/`](../openspec/changes/session-scrub-naming/) | El change que introdujo la convención, `scrub_close` y `/scrub:handoff`. |
