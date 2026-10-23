@@ -2,6 +2,8 @@
 
 Keep your Pi `/resume` list clean and descriptive — without the per-session opening ceremony.
 
+> Human-facing usage guide (Spanish): [`docs/guide.md`](docs/guide.md) — objective, current
+> commands, tools, the project-session workflow, and `/scrub:handoff` in detail.
 > As-built behavior specification, cited to source: [`docs/behavior.md`](docs/behavior.md).
 > Vocabulary used across the code and the spec, one term per line with its `path:line`:
 > [`docs/glossary.md`](docs/glossary.md) (Spanish, owner-facing).
