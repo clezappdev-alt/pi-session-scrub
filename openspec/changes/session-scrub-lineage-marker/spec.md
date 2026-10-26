@@ -57,11 +57,22 @@ mentions `A`. The free text a handoff carries forward is the previous text **wit
 stripped**, which is what keeps the line one marker long however long the chain gets, and
 `scrub_close` must obey the same rule: preserving an inherited marker never adds a second one.
 
-**S7 — the residual, stated instead of hidden.** A name is static text written at one instant; a
-session created *later* can share the origin's abbreviation, and then the stored marker is ambiguous
-even though every listing stays unambiguous. The guarantee this change delivers is therefore: *the
-marker is unique among the sessions that exist when the name is written*. Anything stronger would
-mean rewriting stored names whenever a new session appears, which is not what a name is for.
+**S7 — the residual is accepted, and written down instead of hidden** (decision, 2026-10-26). A name is
+static text written at one instant; a session created *later* can share the origin's abbreviation, and
+then the stored marker is ambiguous even though every listing stays unambiguous. The guarantee this
+change delivers is therefore: *the marker is unique among the sessions that exist when the name is
+written*. Anything stronger means either creating the destination before naming the origin (which
+trades a proven ordering property for an unproven one) or widening every marker to twelve hex
+characters, which pays name budget forever for a gain that `ids.ts` already measured as not certain
+("twelve sessions … agreed on the first twelve"). Neither is worth it to fix a stale label.
+
+**S8 — the marker syntax stays `desde`, and the visible budget is acknowledged.** The overhead is
+`pausa: ` (7) + `desde <abbr> · ` (6 + width + 3), so with an eight-character abbreviation about 53
+characters of the free text are visible where Pi truncates a picker row (~77, measured). `←` would
+save four characters at the cost of a second syntax on disk forever and a glyph that renders
+differently per terminal; the marker also has to strip from names already written with `desde`.
+So: keep `desde`, keep the marker in front (pairing beats the tail), and tell the human — through
+`scrub_close`'s own description — to keep the text short enough to survive the truncation.
 
 **Out of scope:** rewriting names already on disk, a new name syntax for the lineage, any change to
 `parentSession` usage, and every command that is not `/scrub:handoff` or `scrub_close`.
@@ -79,5 +90,8 @@ mean rewriting stored names whenever a new session appears, which is not what a 
 - **T4 — NB-13: exactly one marker, always the parent's.** A three-session chain produces
   `pausa: desde A · …` then `pausa: desde B · …`, with the older marker absent from both the name
   and the seeded text; `scrub_close` on a session that already carries a marker never produces two.
-- **T5 — docs.** `docs/behavior.md` Layer B for `scrub_close` and `/scrub:handoff`; the canonical
-  spec gains NB-10..NB-13 with the S7 residual written down.
+- **T5 — docs.** `docs/behavior.md` Layer B for `scrub_close` and `/scrub:handoff`, and the
+  canonical spec gains NB-10..NB-13 with the S7 residual written down.
+- **T6 — the visible budget reaches the human.** `scrub_close`'s tool description says the text must
+  survive the picker's truncation (~53 characters once the marker is there), and its tests pin the
+  guidance rather than the wording.
