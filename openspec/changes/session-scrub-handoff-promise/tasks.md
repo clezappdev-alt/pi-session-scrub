@@ -1,6 +1,6 @@
 # Tasks — session-scrub-handoff-promise
 
-The requirement delta is `spec.md` in this directory (S1–S7). This file is the one task ledger.
+The requirement delta is `spec.md` in this directory (S1–S8). This file is the one task ledger.
 
 - [x] **T1 — A1 in the type model.** `name.ts` exports `CLOSE_STATES` (host-free) and `index.ts` builds
   `ScrubCloseParams.state` from it, so the schema cannot drift from the constant. Tests: the set is

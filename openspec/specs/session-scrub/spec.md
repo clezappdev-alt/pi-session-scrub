@@ -933,7 +933,7 @@ Cross-home listing, LLM naming, migration of historical sessions without confirm
 
 ## Slice 5 — the handoff promise (`session-scrub-handoff-promise`, appended 2026-10-26)
 
-**Source:** `openspec/changes/session-scrub-handoff-promise/spec.md` (S1–S7). NB-03 and NB-04 above are MODIFIED in place; nothing else in the canonical file changes.
+**Source:** `openspec/changes/session-scrub-handoff-promise/spec.md` (S1–S8). NB-03 and NB-04 above are MODIFIED in place; nothing else in the canonical file changes.
 
 **The defect closed.** `traspaso` is the only state that asserts something about another session, and `scrub_close` could write it — so the plugin could announce a continuation that did not exist yet. The consequence was permanent: `classifySession` returns `namedProtected` for every named session, so the row could never be cleaned by `/scrub:apply`; and the standalone promise carried no pointer at all, because `closeName` never invents a token (measured on a fresh session: `traspaso: implementar el handoff`).
 
