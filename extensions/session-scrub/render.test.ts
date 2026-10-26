@@ -205,3 +205,37 @@ test("the restore result line is singular for one session and plural otherwise",
   assert.equal(formatRestoreResult(1), "Restored 1 session.");
   assert.equal(formatRestoreResult(2), "Restored 2 sessions.");
 });
+
+// --- R2-confirm-body-delimiter: the function owns the separator, so a detail fragment
+// that arrives without its own leading space can never glue to the audit line ---
+
+test("the trash confirm body inserts the separator itself when the detail fragment has no leading space", () => {
+  const body = formatTrashConfirmBody('review 01a14ce0 msgs=9', 'first="old chat"');
+  assert.equal(
+    body,
+    'review 01a14ce0 msgs=9 first="old chat"\nMove is reversible via /scrub:restore.',
+  );
+});
+
+// --- R3-coverage-escape-quote: the compact row quotes its name and its head as data ---
+
+test("the compact machine row escapes quotes and backslashes in the name and the head", () => {
+  const row = formatCompactRow({
+    shortId: "01a14ce0",
+    messageCount: 3,
+    ageDays: 1,
+    sessionName: 'ship the "renderer"',
+    head: 'say "hi" \\ now',
+  });
+  assert.equal(
+    row,
+    '01a14ce0 · 3msgs · 1d · named "ship the \\"renderer\\"" · say \\"hi\\" \\\\ now',
+  );
+});
+
+// --- R3-coverage-zero-count: zero is plural, and the remaining count is kept ---
+
+test("the result lines pluralize zero sessions", () => {
+  assert.equal(formatTrashResult(0, 9), "Trashed 0 sessions. Remaining: 9.");
+  assert.equal(formatRestoreResult(0), "Restored 0 sessions.");
+});

@@ -1,8 +1,16 @@
 # session-scrub — behavior specification (as-built)
 
 **Status:** as-built documentation, derived from source only.
-**Reflects:** released behavior at `v0.3.0` (`3dd6361`). **Refreshed at each tag**, not per commit.
-**Source of truth:** `extensions/session-scrub/index.ts` @ `c34b1d6`, 1682 lines.
+**Reflects:** released behavior at `v0.3.0` (tag commit `1d4b836`), snapshotted at
+`3dd6361` on 2026-10-08 — no executable change landed in between. **Refreshed at each
+tag**, not per commit.
+**Current gap:** HEAD is ahead of that snapshot by a number that grows with every commit;
+count it with `git rev-list --count 3dd6361..HEAD` instead of trusting a fixed figure. The
+surfaces and predicate changes added since then are listed as a boundary in
+[§12](#12-added-after-this-snapshot--not-described-here),
+not described as behavior.
+**Source of truth:** `extensions/session-scrub/index.ts` @ `c34b1d6`, 1682 lines — the
+snapshot every `path:line` citation below refers to, never the file at HEAD.
 Every behavioral claim below carries a `path:line` citation to that file. Where a
 claim could not be verified from the source, it is written as
 `UNVERIFIED: <what could not be confirmed, and why>`.
@@ -49,9 +57,12 @@ Line-number anchors re-derived from the file during this write:
 
 ## 0. Registration surface
 
-Five commands and one tool are registered, and nothing else is registered
+Five commands and one tool are registered **in the release this document
+reflects** (`v0.3.0`); nothing else is registered there
 (`export default function (pi: ExtensionAPI)` at
-`extensions/session-scrub/index.ts:1635-1682`):
+`extensions/session-scrub/index.ts:1635-1682`). Two further commands and one
+further tool were added after this snapshot and are **not** described here —
+see [§12](#12-added-after-this-snapshot--not-described-here):
 
 Each registration is quoted with its literal command name and description; the
 handler definitions are cited in their own sections.
@@ -209,10 +220,13 @@ is read.
    (`getTrashDir(ctx.sessionManager.getSessionDir())` `index.ts:567`) and loop
    the actionable set **in audit order** (`const a of actionable` `index.ts:569`).
 6. Per item: `ctx.ui.confirm` with `"Trash session <id8>?"` and a body built by
-   `formatTrashConfirmBody` (`render.ts:143-145`, called at `index.ts:487`): the
+   `formatTrashConfirmBody` (`render.ts:147-151`, called at `index.ts:487`): the
    audit line and, when present, the detail share the first line, and
    `"Move is reversible via /scrub:restore."` always begins its own line — for a
    plain `candidate` the sentence can never read as glued to the reason. The
+   separator between the audit line and the detail belongs to the renderer, not
+   to the caller, so a detail fragment that arrives without its own leading space
+   is still separated instead of gluing onto the reason. The
    detail exists only for `old-needs-confirm` and carries the first 80 chars of
    the first message and the modified ISO timestamp
    (`const detail =` `index.ts:481-484`).
@@ -221,7 +235,7 @@ is read.
    at `warning` (`index.ts:582-584`). The loop continues.
 8. Re-lists with `SessionManager.list(ctx.cwd)` and reports, pluralized,
    `Trashed <n> session(s). Remaining: <r>.` (`formatTrashResult`
-   `render.ts:148-151`, called at `index.ts:498`; singular for one session).
+   `render.ts:159-161`, called at `index.ts:498`; singular for one session).
 
 **Non-TUI (`print` / `json` / `rpc`) behavior.** `resolveDryRun` is true whenever
 `!(mode === "tui" && hasUI)` (`isInteractive` `index.ts:317-319`), so every
@@ -238,7 +252,7 @@ double-moved; with nothing left actionable the run terminates at
 `actionable.length === 0` (`index.ts:555-558`) with `Nothing to trash.`
 If the whole set was declined the counter never increments
 (`let trashed = 0` `index.ts:479`) and the run still reports pluralized
-`Trashed <n> session(s). Remaining: <r>.` (`formatTrashResult` `render.ts:148-151`).
+`Trashed <n> session(s). Remaining: <r>.` (`formatTrashResult` `render.ts:159-161`).
 
 **Error / edge paths.**
 
@@ -291,7 +305,7 @@ silently ignored. This is a real as-built behavior, not a spec intention.
    `Skipped ${basename(p)}: ${errorMessage(err)}` at `warning`
    (`ctx.ui.notify(` `index.ts:616-617`) and the loop continues.
 6. `notify` with the pluralized `Restored <n> session(s).` at `info`
-   (`formatRestoreResult` `render.ts:154-156`, called at `index.ts:536`; singular
+   (`formatRestoreResult` `render.ts:164-166`, called at `index.ts:536`; singular
    for one session).
 
 **Idempotency.** Restoring removes the file from the trash listing, so a second
@@ -473,12 +487,12 @@ text never leaks into assignment tokens or leftovers.
   `msgs, no signal — words decide; park only if tail agrees`
   (`index.ts:961`).
 - `machine` rows render as **compact one-liners** by default
-  (`function formatCompactRow` `render.ts:117-135`, a host-free pure renderer
+  (`function formatCompactRow` `render.ts:117-136`, a host-free pure renderer
   pinned by `render.test.ts`), emitted at
   (`formatCompactRow({` `index.ts:1447`) with the schema
   `<short> · <n>msgs · <d>d · named "<name>"|unnamed · <head≤121>`,
-  built by `const named =` (`render.ts:126`); the head slice is 120
-  chars plus `…` (`args.head.length > COMPACT_HEAD_MAX` `render.ts:131-133`).
+  built by `const named =` (`render.ts:124`); the head slice is 120
+  chars plus `…` (`args.head.length > COMPACT_HEAD_MAX` `render.ts:129-131`).
   The row has **no weak-guess field**: it only ever renders machine-grade rows,
   whose proposal is the fact `keep`, so a guess there could only ever print a
   misleading guess. The guess stays where it belongs — on the human-grade packs
@@ -1163,24 +1177,31 @@ every case below.
    code's two-levels-up arithmetic only if `getSessionDir()` really is
    `sessions/--<project>--/` — see the UNVERIFIED in §8.
 
-## 12. Not implemented yet
+## 12. Added after this snapshot — not described here
 
-The session-naming capability is **not implemented**. Nothing in §§0–11 describes
-it as current behavior. The following is scope, drawn from the proposed change
-(`openspec/changes/session-scrub-naming/proposal.md`, status `proposed`) and
-recorded here **only** to mark the boundary — none of it is behavior today:
+**Status correction (2026-10-22).** This document reflects `v0.3.0`, and HEAD is ahead
+of its `3dd6361` snapshot — by how much changes on every commit, so count it rather than
+quoting a number. The naming capability this section used to call unimplemented
+**has since shipped**, and so have surfaces this snapshot never knew about.
+Nothing in §§0–11 describes them, and this section does not describe them
+either: it marks the boundary, so the absence is not read as a claim of
+nonexistence.
 
-- Making naming a plugin capability rather than a manual `/resume` + `/name`
-  round-trip (proposal §1), which would supersede the REQ-09 prohibition on
-  programmatic naming.
-- Any LLM-generated or programmatic name-setting call. Today the only
-  `appendSessionInfo` call site is the consented triage rename
-  (`index.ts:1182`), and the hint path has none.
-- A picker, a guard mechanism, or a confirmation UX — the proposal states these
-  are deferred to its own spec delta and are unspecified.
-- Any change to the classification predicate. Today's predicate is the one
-  documented in §1, including the unnamed-session behavior the proposal
-  questions.
+Shipped after this snapshot, not described here:
+
+- The session-naming convention (`pausa` / `abierto` / `espera` / `traspaso` /
+  `hecho`), the `scrub_close` tool that names the live session, and
+  `/scrub:handoff`, which creates the announced continuation. Source change:
+  `openspec/changes/session-scrub-naming/`.
+- `/scrub:adopt`, which applies the convention to sessions that predate it, with
+  a per-file backup and an mtime guard. **No canonical change describes it yet.**
+- The classifier reordering and the conversation-turn floor (`NM-04`/`NM-05`),
+  which change the predicate documented in §1: an explicit `keep`/`paused`
+  verdict now protects an old or empty unnamed session, and an unnamed session
+  with 5 or more conversation turns is never a candidate for being unnamed.
+
+The scope list this section used to carry — what naming *would* be — is
+superseded by the shipped behavior above, not deferred.
 
 ## 13. Observed population evidence (not guarantees)
 

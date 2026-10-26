@@ -139,19 +139,28 @@ export function formatCompactRow(args: {
  * Confirm body for the per-item trash loop (N3). The audit line and the
  * old-session detail stay on the first line; the reversal sentence gets its
  * own line so it can never read as glued to a reason or a detail fragment.
+ *
+ * The separator between the audit line and the detail is owned here, not by the
+ * caller: a fragment that arrives without its own leading space is still
+ * separated, so it can never glue onto a reason (`reason=explicit-trashfirst=…`).
  */
 export function formatTrashConfirmBody(auditLine: string, detail: string): string {
-  return `${auditLine}${detail}\nMove is reversible via /scrub:restore.`;
+  const fragment = detail.trim();
+  const firstLine = fragment.length === 0 ? auditLine : `${auditLine} ${fragment}`;
+  return `${firstLine}\nMove is reversible via /scrub:restore.`;
+}
+
+/** The counted noun of the post-run lines (N4): singular only for exactly one. */
+function sessions(count: number): string {
+  return count === 1 ? "1 session" : `${count} sessions`;
 }
 
 /** Pluralized post-run line of /scrub-apply (N4): `Trashed <n> session(s). Remaining: <r>.` */
 export function formatTrashResult(count: number, remaining: number): string {
-  const plural = count === 1 ? "" : "s";
-  return `Trashed ${count} session${plural}. Remaining: ${remaining}.`;
+  return `Trashed ${sessions(count)}. Remaining: ${remaining}.`;
 }
 
 /** Pluralized post-run line of /scrub-restore (N4): `Restored <n> session(s).` */
 export function formatRestoreResult(count: number): string {
-  const plural = count === 1 ? "" : "s";
-  return `Restored ${count} session${plural}.`;
+  return `Restored ${sessions(count)}.`;
 }
