@@ -1,7 +1,7 @@
 {
   "name": "pi-session-scrub",
-  "version": "0.5.1",
-  "description": "Keep Pi session list clean and descriptive — zero ceremony, opt-in commands only.",
+  "version": "0.6.0",
+  "description": "Keep Pi session list clean and descriptive \u2014 zero ceremony, opt-in commands only.",
   "author": "clezapp",
   "keywords": [
     "pi-package",
