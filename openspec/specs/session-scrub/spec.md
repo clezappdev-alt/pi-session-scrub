@@ -839,6 +839,40 @@ For any non-live session whose file was modified within 120 seconds the system M
 - WHEN phase 1 builds the triage set
 - THEN it is absent from the packs, because its name already answered the question.
 
+### NB-10 — The handoff's lineage marker is population-derived, never a fixed slice
+
+`/scrub:handoff` MUST abbreviate the origin's session id with the same rule NB-06 gives the listings — `ids.ts:uniqueAbbreviations` over every session in the project plus the live origin — and MUST NOT slice a fixed number of characters. Measured on `v0.4.0`: two handoffs four seconds apart produced origin and destination ids sharing their first eight hex characters (`01a17881-6e43…`, `01a17881-f553…`), so the child's `desde <id8>` marker also named the child.
+
+#### Scenario: a burst widens the marker
+- GIVEN an origin whose first eight characters another project session already holds
+- WHEN `/scrub:handoff` plans the pair of names
+- THEN the marker is longer than eight characters, and unique among the sessions that exist.
+
+#### Scenario: the residual is bounded and stated
+- GIVEN a session created *after* the name was written, sharing the origin's abbreviation
+- THEN the marker may no longer be resolvable, because a name is static text; the guarantee is uniqueness against the population at write time, never against the future.
+
+### NB-11 — `scrub_close` preserves an inherited marker and never invents one
+
+`scrub_close` MUST keep the leading lineage marker the current name carries, replacing only the free text; it MUST NOT add a marker to a name that has none, because a rename tool has no way to know where the work came from. The `MAX_TEXT` budget applies to the text, never to the marker.
+
+#### Scenario: the marker survives a close
+- GIVEN a session named `pausa: desde 01a177dc · …`, seeded by a handoff
+- WHEN `scrub_close` writes `espera` with a new next step
+- THEN the name is `espera: desde 01a177dc · <nuevo texto>`.
+
+### NB-12 — A lineage marker is stripped at any width, eight included
+
+`stripLineage` MUST accept a marker of eight or more hex characters, so names already on disk (eight) keep stripping exactly as before and the wider markers NB-10 produces strip too. A marker appearing later in the text is the human's words and is never stripped.
+
+### NB-13 — A name carries at most one marker, and it is the parent's
+
+A name MUST NOT carry two lineage markers, and the marker MUST name the immediate predecessor, never an ancestor further back. In `A → B → C`, `C` reads `desde B`; `A` is absent from `C`'s name and from the seeded text, and closing a session that already carries a marker never produces a second one.
+
+#### Scenario: a three-session chain
+- GIVEN `A`, then `B` created by a handoff from `A`, then `C` created by a handoff from `B`
+- THEN `B` is `pausa: desde A · …`, `C` is `pausa: desde B · …`, and neither mentions a third id.
+
 ### Slice-4 verified deviations (AS-BUILT, recorded 2026-10-26)
 
 1. **`espera` derives `paused`, not a distinct verdict.** The five states are finer than the five verdicts; only the name carries `espera`.
@@ -852,7 +886,7 @@ For any non-live session whose file was modified within 120 seconds the system M
 ### Slice-4 manual test scenarios (NS1–NS8, in a live Pi host — Slices 1–3 lists still apply)
 
 1. **NS1 close and read** — `scrub_close` sets `hecho:`/`pausa:` and `/resume` shows it; `scrub_mark` on that session is refused with the pointer.
-2. **NS2 handoff chain** — `/scrub:handoff` twice in a row produces `traspaso: <id8> · …` and `pausa: desde <id8> · …`, and the second message does not carry two lineage markers.
+2. **NS2 handoff chain** — `/scrub:handoff` twice in a row produces `traspaso: <abbr> · …` and `pausa: desde <abbr> · …` (NB-10: the abbreviation comes from the population, so it can exceed eight characters), and the second message does not carry two lineage markers (NB-13).
 3. **NS3 memory key** — with a `mem_save` before the handoff, the seeded message names its `topic_key`; with none, the message omits the memory lines instead of inventing one.
 4. **NS4 adopt dry-run** — `/scrub:adopt` lists would-adopt, needs-state, textless, already-adopted and the refused live session, and writes nothing.
 5. **NS5 adopt apply** — `--apply` with one verdict-derived and one inline assignment writes both, backups exist, and each file gained exactly one entry.
