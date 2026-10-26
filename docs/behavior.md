@@ -1,7 +1,7 @@
 # session-scrub — behavior specification (as-built)
 
 **Status:** as-built documentation, derived from source; requirements are cited by ID from the canonical spec and never restated here.
-**Reflects:** anchored to the released tag `v0.4.2`; Layers A–B describe `master` at `f2bb04d` (2026-10-26), which is what that tag releases — everything `v0.4.1` carried, plus the two-token lineage head (NB-14..NB-16: a middle session re-emits the parent it inherited and shows its own token, one helper owns the grammar, and a close preserves the whole head). Nothing described below is unreleased. The anchor is checked against `git describe --tags` by `doccheck.test.ts` and the whole document is re-reconciled at each new tag, not per commit.
+**Reflects:** anchored to the released tag `v0.5.0`; Layers A–B describe `master` at `1fd1946` (2026-10-26), which is what that tag releases — everything `v0.4.2` carried, plus the handoff promise (NB-03/NB-04 as amended: `scrub_close` writes the four `CLOSE_STATES`, `traspaso` is written only by `/scrub:handoff` and only after the destination exists, by path rather than through the live-session call) and the bounded tool result line (a result is collapsed to one line and budgeted by `width` in cells, so a refusal can no longer abort the TUI). Nothing described below is unreleased. The anchor is checked against `git describe --tags` by `doccheck.test.ts` and the whole document is re-reconciled at each new tag, not per commit.
 
 ## How to read this document
 
