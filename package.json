@@ -8,6 +8,20 @@
   "pi": {
     "extensions": ["./extensions/session-scrub/index.ts"]
   },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node --test \"extensions/session-scrub/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "@types/node": "22.20.5",
+    "typebox": "1.4.3",
+    "typescript": "5.7.3"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=1.2.0",
     "typebox": "*"
