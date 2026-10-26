@@ -8,7 +8,7 @@ Keep your Pi `/resume` list clean and descriptive — without the per-session op
 > code by symbol: [`docs/behavior.md`](docs/behavior.md).
 > Vocabulary used across the code and the spec, one term per line with its `path:line`:
 > [`docs/glossary.md`](docs/glossary.md) (Spanish, owner-facing).
-> Anchored to the released tag `v0.5.1`; describes `master` as reconciled on 2026-10-26 — that
+> Anchored to the released tag `v0.6.0`; describes `master` as reconciled on 2026-10-26 — that
 > reconciliation is what the tag contains — and is re-reconciled at each tag, not per commit.
 > The three `docs/` files above are written in Spanish, for the owner; this README is the
 > English entry point.
@@ -22,7 +22,7 @@ dependencies of its own — Pi already provides its libraries.
 ## Install
 
 ```bash
-pi install git:github.com/clezappdev-alt/pi-session-scrub@v0.5.1
+pi install git:github.com/clezappdev-alt/pi-session-scrub@v0.6.0
 ```
 
 Then enable it in `pi config` and reload. To pin a different release, change the
