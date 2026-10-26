@@ -120,7 +120,13 @@ verdict entry (`name.ts:resolveVerdict`, NB-01/NB-02).
 
 `/scrub:init` writes the `POLICY_TEMPLATE` block delimited by
 `<!-- pi-session-scrub:start -->` / `<!-- pi-session-scrub:end -->`
-(`index.ts:parsePolicyBlock`). The plugin reads exactly one key:
+(`policy.ts:parsePolicyBlock`). The block is a **region**, not a switch: keys are
+read only between the first start marker and the first end marker after it, and
+both must be present in that order — otherwise the block is absent and the
+conservative default applies (PB-01). Markers inside a fenced code block — three
+or more backticks, or three or more tildes — or quoted as an inline code span are
+quoted text, never markers and never keys, so a template pasted as an example in a
+project's own docs cannot become policy (PB-02). The plugin reads exactly one key:
 `ephemeral-flows:` — comma-separated exact skill-flow names; blank, `#`-comment,
 placeholder (`<…>`) and unknown lines are skipped. The `verdicts:` and `mark-on:`
 lines in the template are agent guidance, parsed by nothing. Any parse failure or
@@ -219,15 +225,19 @@ trash, no cross-project restore.
 
 ### `/scrub:init` — write the POLICY block once (REQ-08)
 
-`index.ts:handleScrubInit`. Parses no flag. Reads `<ctx.cwd>/AGENTS.md` (any read
-throw treated as empty); if `POLICY_START` already occurs anywhere in the file →
-`"Policy block already exists."` and nothing else — no rewrite, no merge, no
-update. Otherwise appends the template with a blank-line separator and reports
-`"Policy block written to AGENTS.md. Fill ephemeral-flows for this project."`
-Idempotent by the marker guard. The write is not wrapped in `try/catch`: an
-unwritable `AGENTS.md` rejects outward. The template's placeholder
-`ephemeral-flows: <flow-name-1>, <flow-name-2>` parses as empty, so a freshly
-written block is inert until a human fills it (REQ-03).
+`index.ts:handleScrubInit` decides with `policy.ts:planInitWrite` and keeps only
+I/O and UI for itself. It reads `<ctx.cwd>/AGENTS.md` (a read throw is treated as
+empty). With an unfenced start marker present it refuses and names its 1-based
+line — `Policy block already exists at line <n>. Nothing written.` Otherwise it
+previews the exact text it would append: `--dry-run`, and any non-interactive mode
+like every other write path (REQ-11), notifies `Dry-run — nothing written. Would
+append to AGENTS.md:` followed by that text; the TUI confirms
+`"Write the session-scrub policy block to AGENTS.md?"` with the same text.
+A failed write notifies `Could not write AGENTS.md: <message>` and mutates
+nothing — the command never rejects outward (PB-04). On success it reports
+`Policy block written to AGENTS.md. Fill ephemeral-flows for this project.` The
+template's placeholder `ephemeral-flows: <flow-name-1>, <flow-name-2>` parses as
+empty, so a freshly written block is inert until a human fills it (REQ-03).
 
 ### `/scrub:triage` — assisted triage (TR-01…TR-13, UX-01…UX-08)
 

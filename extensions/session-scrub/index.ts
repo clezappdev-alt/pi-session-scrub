@@ -63,6 +63,11 @@ import {
 } from "./handoff.ts";
 import { uniqueAbbreviations, abbrevOf, idFromFilename } from "./ids.ts";
 import {
+  parsePolicyBlock,
+  planInitWrite,
+  type PolicyConfig,
+} from "./policy.ts";
+import {
   escapeQuote,
   formatCompactRow,
   formatRestoreResult,
@@ -79,44 +84,11 @@ import {
 
 const VERDICT_CUSTOM_TYPE = "session-scrub/verdict";
 const HINT_CUSTOM_TYPE = "session-scrub/name-hint";
-const POLICY_START = "<!-- pi-session-scrub:start -->";
-const POLICY_END = "<!-- pi-session-scrub:end -->";
 const STATUS_KEY = "scrub:name";
-
-const POLICY_TEMPLATE = `<!-- pi-session-scrub:start -->
-# session-scrub policy — project-local, opt-in.
-# Lines starting with \`#\` are guidance FOR THE AGENT; the plugin only
-# reads the \`key: value\` lines below. The user fills the <placeholders>.
-#
-# VERDICTS (record via the scrub_mark tool, with an optional reason):
-#   keep      — this session holds work worth preserving; never a trash candidate.
-#   paused    — block closure: work stopped but WILL continue later; not a candidate.
-#   finished  — session closure: the work is done; the session becomes a trash candidate.
-#   ephemeral — this session ran one of the ephemeral flows below; trash candidate.
-#   trash     — explicitly condemned; trash candidate even if the session is named.
-#
-# WHEN TO MARK:
-#   session_rename — when this session gets named or renamed (/name), record keep.
-#   block_close    — when work pauses with intent to resume, record paused.
-#   session_close  — when the work is done, record finished.
-#   ephemeral flow — when the session invokes a flow listed in ephemeral-flows, record ephemeral.
-#
-# EPHEMERAL FLOWS for this project: exact skill-flow names as invoked
-# (the name after /skill:), comma-separated. ONLY these flows ever qualify
-# a session as ephemeral. Leave the placeholders if none apply.
-verdicts: keep | paused | finished | ephemeral | trash
-mark-on: session_rename, block_close, session_close
-ephemeral-flows: <flow-name-1>, <flow-name-2>
-<!-- pi-session-scrub:end -->
-`;
 
 // ---------------------------------------------------------------------------
 // Flat interfaces (strict-typed, no nested unions beyond Classification)
 // ---------------------------------------------------------------------------
-
-interface PolicyConfig {
-  ephemeralFlows: string[];
-}
 
 interface AuditedSession {
   info: SessionInfo;
@@ -177,27 +149,6 @@ function deriveSlug(firstUserText: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
-}
-
-/** F4 grammar: skip `#`/blank lines; `<...>` placeholders read as empty. */
-function parsePolicyBlock(text: string): PolicyConfig | undefined {
-  if (!text.includes(POLICY_START) || !text.includes(POLICY_END)) {
-    return undefined;
-  }
-  const flows: string[] = [];
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (line.length === 0 || line.startsWith("#")) continue;
-    if (line.startsWith("ephemeral-flows:")) {
-      const value = line.slice("ephemeral-flows:".length).trim();
-      if (value.length === 0 || value.includes("<")) continue;
-      for (const part of value.split(",")) {
-        const flow = part.trim();
-        if (flow.length > 0 && !flow.includes("<")) flows.push(flow);
-      }
-    }
-  }
-  return { ephemeralFlows: flows };
 }
 
 /**
@@ -537,7 +488,6 @@ async function handleScrubRestore(args: string, ctx: ExtensionCommandContext): P
 }
 
 async function handleScrubInit(args: string, ctx: ExtensionCommandContext): Promise<void> {
-  void args;
   const agentsPath = join(ctx.cwd, "AGENTS.md");
   let existing = "";
   try {
@@ -545,13 +495,44 @@ async function handleScrubInit(args: string, ctx: ExtensionCommandContext): Prom
   } catch {
     existing = "";
   }
-  if (existing.includes(POLICY_START)) {
-    ctx.ui.notify("Policy block already exists.", "info");
+  const plan = planInitWrite(existing);
+  // The refusal names the line so the human can find (and edit) the block;
+  // a fenced quote of the template in these docs does not count as a block.
+  if (plan.kind === "exists") {
+    ctx.ui.notify(
+      `Policy block already exists at line ${plan.line}. Nothing written.`,
+      "info",
+    );
     return;
   }
-  const sep = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
-  writeFileSync(agentsPath, `${existing}${sep}\n${POLICY_TEMPLATE}`);
-  ctx.ui.notify("Policy block written to AGENTS.md. Fill ephemeral-flows for this project.", "info");
+  if (resolveDryRun(args, ctx)) {
+    ctx.ui.notify(
+      `Dry-run — nothing written. Would append to AGENTS.md:\n${plan.text}`,
+      "info",
+    );
+    return;
+  }
+  // Interactive path: show the exact bytes first, then confirm.
+  const ok = await ctx.ui.confirm(
+    "Write the session-scrub policy block to AGENTS.md?",
+    `Appends:\n${plan.text}`,
+  );
+  if (!ok) {
+    ctx.ui.notify("Nothing written.", "info");
+    return;
+  }
+  // A failed write is notified, never thrown (PB-04): every other error path
+  // in this plugin notifies, and zero mutation must stay observable.
+  try {
+    writeFileSync(agentsPath, `${existing}${plan.text}`);
+  } catch (err) {
+    ctx.ui.notify(`Could not write AGENTS.md: ${errorMessage(err)}`, "warning");
+    return;
+  }
+  ctx.ui.notify(
+    "Policy block written to AGENTS.md. Fill ephemeral-flows for this project.",
+    "info",
+  );
 }
 
 // ---------------------------------------------------------------------------

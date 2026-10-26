@@ -38,6 +38,26 @@ PI_Agent-MyPlugins/              ← container (own repo, this dir EXCLUDED via 
 - Meta and code NEVER share a commit: meta changes and implementation changes
   go in SEPARATE commits (work-unit-commits), so gentle-ai reviews see code only.
 
+## Artifact store — who owns what
+
+Two stores, one owner each. They never duplicate each other:
+
+| Question | Lives in | Rule |
+| --- | --- | --- |
+| What must the product do? Requirements, accepted deviations, decisions | `openspec/` (tracked, reviewed, archived) | the only authority |
+| What is this change delivering, and in what order? | `openspec/changes/<change>/tasks.md` | the one task ledger |
+| What was asked, what was measured, what was committed — the session journal | `odd/tasks/` (git-ignored) | pointers only: never a copied requirement, never a second task list |
+
+A change opens with **`spec.md` (the requirement delta) and `tasks.md`**. Proposal, design,
+verify-report, sync-report and archive-report are for changes big enough to earn them, not
+the default. `openspec/changes/archive/` is frozen history and is never maintained.
+
+**Why requirements stay tracked.** The naming block once shipped with no requirement at all
+and nobody noticed for twelve days; the canonical spec is what later let a read find
+`REQ-03`, a requirement that described a parser the code never had. A requirement that
+lives only in an ignored file cannot be diffed, reviewed or blamed — and its only copy is
+a local database.
+
 ## Decision gates
 
 | Situation | Action |
