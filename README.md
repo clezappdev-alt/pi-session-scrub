@@ -44,8 +44,9 @@ opposite:
   sessions that predate it (see below).
 - `/scrub:handoff` — create the continuation this session promised: a new
   session, named and seeded with this session, the next step and the key of
-  the last memory written here. Use after naming this session with a
-  `traspaso:` state.
+  the last memory written here. Use it after naming this session with the
+  pending step: `pausa:` is the honest state while the handoff is pending, and
+  the command itself writes the `traspaso:` once the new session exists.
 
 ## Adoption
 

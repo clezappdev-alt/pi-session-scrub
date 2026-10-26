@@ -62,6 +62,8 @@ sentence of redirect, so the per-turn token cost goes down. `docs/behavior.md` q
 literal; the tool name and surface inventory are unchanged, so `doccheck.test.ts` keeps passing without
 an inventory edit.
 
+**S8 — a rejected call must not break the frame** (found by the bench, not by the brief). A1 makes the schema reject a state, and the host's rejection is a multi-line, arbitrarily wide message. `render.ts:renderToolResultLine` passed the result text into a one-line component untouched, so the TUI emitted a 283-column frame line — and Pi aborts when a component returns a line wider than the terminal (measured 2026-10-26 on 1.3.0). The result line MUST collapse whitespace, MUST budget the raw text by the width the host asks for, and MUST stay inside that width at every terminal size, while the model still receives the full error in its context.
+
 **Out of scope:** detecting promises already on disk (the rejected option B), a
 `/scrub:handoff --existing <id>` for a continuation built outside scrub, and any change to `adopt`.
 
@@ -75,5 +77,6 @@ an inventory edit.
 - **T3 — A2 in the handler.** The origin write moves after `newSession`, by path, with the child as
   live; cancellation and failure paths reported honestly; a source-order gate so a later edit cannot
   quietly move it back.
-- **T4 — docs.** `behavior.md` Layer B for both surfaces, the canonical NB-03/NB-04 amendments, the
-  `docs/guide.md` state table and §6, and `README.md`.
+- **T5 — the frame survives a rejection.** `renderToolResultLine` collapses the result to one line and
+  budgets it by the host's width, with tests for the measured 283-column payload, a narrow terminal,
+  and the host's own error flag.

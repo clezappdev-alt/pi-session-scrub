@@ -728,18 +728,28 @@ The system MUST derive a verdict from the state when the name carries one — `p
 
 ### NB-03 — `scrub_close` names this session, and `traspaso` obliges more than a name
 
-The system MUST expose a `scrub_close` tool taking `{ state, text }` over exactly the five states, writing the name with the same call `/name` makes (memory and disk together), reporting failure as an error result, and carrying `annotations` `{ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }`. The tool description MUST state that `traspaso` obliges the agent to tell the user to run `/scrub:handoff`, because that command creates the continuation and only the human can run it.
+> **MODIFIED (change `session-scrub-handoff-promise`, 2026-10-26):** the tool takes the four states of
+> `CLOSE_STATES` (`pausa`, `abierto`, `espera`, `hecho`), not five. `traspaso` is written only by
+> `/scrub:handoff`, after the continuation exists (NB-04, amended the same day); while a handoff is
+> pending the honest word is `pausa:`.
+
+The system MUST expose a `scrub_close` tool taking `{ state, text }` over exactly the four states of `name.ts:CLOSE_STATES` — every state whose meaning is a fact about *this* session — writing the name with the same call `/name` makes (memory and disk together), reporting failure as an error result, and carrying `annotations` `{ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }`. `traspaso` MUST NOT be offered by the schema: it asserts a continuation in another session, and only `/scrub:handoff` can know that. The tool description MUST state the redirect — while a handoff is pending, close as `pausa:` and tell the user to run `/scrub:handoff`, because that command creates the continuation and only the human can run it. `/name` and `/scrub:adopt` keep writing `traspaso:`: a human's intention, and a migration of sessions that already happened.
 
 #### Scenario: closing names the live session
 - GIVEN the tool is called with `{ state: "hecho", text: "guía + PR mergeado" }`
 - WHEN the handler runs
 - THEN the live session's name is `hecho: guía + PR mergeado` and an unknown state is rejected by the parameter schema before the handler.
 
+#### Scenario: the promise cannot be written by a close
+- GIVEN the live session is unnamed
+- WHEN `scrub_close` is called with `{ state: "traspaso", text: "sigue en la sesión B" }`
+- THEN the parameter schema rejects the call and no name is written.
+
 ### NB-04 — `/scrub:handoff` creates the continuation it promised
 
 The system MUST implement `/scrub:handoff` as a **command** (not a tool: `ctx.newSession` exists only on `ExtensionCommandContext`, and creating a session is deliberate enough that a human types it), MUST derive the next step from the argument text and fall back to the origin name's text, MUST refuse with a warning when neither yields one, and MUST NOT create a session in that case.
 
-The origin MUST be renamed `traspaso: <shortId> · <next>` **before** `newSession`, and the destination MUST be named `pausa: desde <shortId> · <next>` — always `pausa:`, whatever the origin was, because after the handoff the work does arrive here at a known point, and copying the origin state forward would contradict the exclusivity of the five states. `<shortId>` is the first 8 hex characters of the session id. A leading lineage marker in the origin text MUST be stripped so a chain stays one line.
+The destination MUST be created, seeded and named first; the origin MUST be renamed `traspaso: <shortId> · <next>` **after** the destination exists, by path (`index.ts:appendNameToOther`, the NB-08 stack) with the destination as the live path to refuse, and never through `pi.setSessionName` — after the switch the origin is not the live session, and that call would rename the child. The promise is therefore the last write: a cancelled `newSession` MUST write nothing, and a failed origin write MUST be reported as a warning naming the fix, never as success. The destination MUST be named `pausa: desde <shortId> · <next>` — always `pausa:`, whatever the origin was, because after the handoff the work does arrive here at a known point, and copying the origin state forward would contradict the exclusivity of the five states. `<shortId>` is the first 8 hex characters of the session id. A leading lineage marker in the origin text MUST be stripped so a chain stays one line.
 
 The destination MUST start with one `custom_message` entry, `display: false`, carrying only pointers: origin short id, origin name, the next step, and — when the session's own entries contain one — the **last memory write** (`mem_save` or `mem_session_summary`, reads never count) as `topic_key` plus its title. The conversation MUST NOT travel, and the observation id MUST NOT appear: tool results are not persisted in the session file, so an id cannot survive a reload, while `topic_key` travels in the call arguments and `mem_search` resolves it.
 
@@ -920,3 +930,24 @@ Extending NB-11: the close preserves **both** tokens of the head, not only the `
 ### Slice-4 out of scope (unchanged, still deferred)
 
 Cross-home listing, LLM naming, migration of historical sessions without confirmation, any write to another runtime's sessions, a `/scrub:unadopt`, and an undo command (a later `appendSessionInfo` supersedes a name, so none is needed for correctness).
+
+## Slice 5 — the handoff promise (`session-scrub-handoff-promise`, appended 2026-10-26)
+
+**Source:** `openspec/changes/session-scrub-handoff-promise/spec.md` (S1–S7). NB-03 and NB-04 above are MODIFIED in place; nothing else in the canonical file changes.
+
+**The defect closed.** `traspaso` is the only state that asserts something about another session, and `scrub_close` could write it — so the plugin could announce a continuation that did not exist yet. The consequence was permanent: `classifySession` returns `namedProtected` for every named session, so the row could never be cleaned by `/scrub:apply`; and the standalone promise carried no pointer at all, because `closeName` never invents a token (measured on a fresh session: `traspaso: implementar el handoff`).
+
+**Two halves, one writer each.**
+1. `name.ts:CLOSE_STATES` — four states; the tool's TypeBox union is built from it, so the model-facing enum and the tested set cannot drift (`doccheck.test.ts` pins both).
+2. `index.ts:handleScrubHandoff` — the destination is created, seeded and named first; the origin's `traspaso:` is written afterwards by path (NB-08 stack, with the destination as the live path to refuse). The order was proven equivalent before the change: creating the child first and renaming the origin by path produced a byte-identical `/resume` listing, and `showSessionSelector()` hands the picker a lazy `SessionManager.list(...)` loader, so rows are read from disk when the panel opens.
+
+**Boundary, stated.** `/name` and `/scrub:adopt` keep writing `traspaso:`: a human's intention, and a migration of sessions that already happened. A1 closes the path where the plugin asserts an outcome on its own initiative. Detecting promises already on disk (a `/scrub:audit` finding) was considered and rejected: it makes the lie visible only when someone looks, and the write order makes it impossible.
+
+**What did not change.** The five-state vocabulary and its parsing; `closeName` and the head rules (NB-11..NB-16); verdict derivation; the destination name (`pausa: desde …`); the seeded message payload; and the absence of `session_start`/`session_shutdown` handlers (REQ-12) — the fix is a write order, not a lifecycle hook.
+
+### Slice-5 scenarios
+
+1. **NS9 close cannot promise** — `scrub_close` with `state: "traspaso"` is rejected by the schema, and the four offered states are `pausa`, `abierto`, `espera`, `hecho`.
+2. **NS10 handoff writes last** — in a live host, `/scrub:handoff` leaves the destination named `pausa: desde <abbr> · …` and the origin `traspaso: <abbr> · …`, both visible in `/resume`.
+3. **NS11 cancelled handoff writes nothing** — a cancelled switch (another extension returning `cancel`) leaves the origin's name untouched and reports `"scrub:handoff: cancelled, no new session was created."`.
+4. **NS12 close states round-trip** — every `CLOSE_STATES` entry parses back out of its own formatted name, so a state the schema accepts can never land in `/resume` as free text.

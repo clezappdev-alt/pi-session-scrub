@@ -339,10 +339,16 @@ the command context. Plans both names with `handoff.ts:planHandoffNames`: the ne
 step comes from the argument text, falling back to the origin name's text; none →
 refusal `"scrub:handoff: this session names no next step to carry. Name it first
 with /name using a state prefix, or pass the next step as an argument."` and no
-session is created. The origin is renamed `traspaso: <abbr> · <next>` before
-`newSession`; the destination is always `pausa: desde <abbr> · <next>` —
-copying the origin state forward would contradict the exclusivity of the five
-states. `<abbr>` is the origin's minimal-unique abbreviation over the project's
+session is created. The **destination is created, seeded and named first**, and only
+then is the origin renamed `traspaso: <abbr> · <next>` — by path, through
+`index.ts:appendNameToOther` (the NB-08 stack) with the new session as the live path
+to refuse, because after the switch the origin is not the live session and
+`pi.setSessionName` would name the child. The promise is therefore the **last write**:
+a cancelled `newSession` writes nothing, and a failed origin write is reported as a
+warning naming the fix instead of counting as success. The destination is always
+`pausa: desde <abbr> · <next>` — copying the origin state forward would contradict
+the exclusivity of the five states. `<abbr>` is the origin's minimal-unique
+abbreviation over the project's
 sessions plus the live one (`ids.ts:uniqueAbbreviations`, the NB-06 rule reused
 by NB-10), never a fixed slice: measured, two handoffs four seconds apart shared
 their first eight characters, so a fixed slice pointed the child's marker at the
@@ -358,7 +364,8 @@ session's own entries contain one — the last memory write
 (`handoff.ts:findLastMemoryWrite` over `MEMORY_WRITE_TOOLS`; reads never count) as
 topic key and title. The conversation never travels and no observation id appears
 (tool results are not persisted; the topic key is durable). Cancellation reports
-`"scrub:handoff: cancelled, no new session was created."`
+`"scrub:handoff: cancelled, no new session was created."` — and, because the promise
+is written last, that sentence is true about the origin too: it was left as it was.
 
 ### `scrub_mark` — record a verdict (REQ-04, NB-02)
 
@@ -377,9 +384,15 @@ can be marked.
 
 ### `scrub_close` — name this session (NB-01, NB-03)
 
-`index.ts:handleScrubClose`. Takes `{ state, text }` over exactly the five states
-and writes the name with the same call `/name` makes (`pi.setSessionName`), so
-memory and disk update together. Failure reports
+`index.ts:handleScrubClose`. Takes `{ state, text }` over `CLOSE_STATES` — the four
+states whose meaning is a fact about *this* session: `pausa`, `abierto`, `espera`,
+`hecho` (`name.ts:CLOSE_STATES`; `doccheck.test.ts` pins the constant and the schema
+that is built from it). `traspaso` is deliberately absent: it asserts a continuation
+in another session, and only `/scrub:handoff` can know that, because only the handoff
+creates it (NB-04) — while a handoff is pending, the honest word is `pausa:`. `/name`
+and `/scrub:adopt` still write `traspaso:`: a human's intention and a migration of the
+past, never the plugin asserting an outcome. Writes the name with the same call
+`/name` makes (`pi.setSessionName`), so memory and disk update together. Failure reports
 `Could not set the session name: <message>`. Success reports
 `Session name set: <name>`. The name is composed by `name.ts:closeName`, which
 keeps the lineage head the current name already carries — **whole**, both tokens
@@ -388,8 +401,9 @@ the only thing in the picker that says where the work came from and where it
 continues, and rewriting the whole text erased it (NB-11, measured on the session
 that reported it). A rename never invents a token, a head-shaped start on the
 incoming text is stripped instead of stacked so a name never carries two heads
-(NB-13), and the `MAX_TEXT` budget applies to the text, never to the head. The tool description carries the `traspaso` obligation
-(tell the user to run `/scrub:handoff`) and the guidance that the closing memory's
+(NB-13), and the `MAX_TEXT` budget applies to the text, never to the head. The tool description carries the redirect
+(while a handoff is pending, close as `pausa:` and tell the user to run
+`/scrub:handoff`) and the guidance that the closing memory's
 title states the block's state. Annotations: `readOnlyHint: false`,
 `destructiveHint: true`, `idempotentHint: true`, `openWorldHint: false`.
 
