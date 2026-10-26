@@ -23,6 +23,17 @@ export interface RenderTheme {
 /** One-line preview budget. Truncation happens on the RAW string before painting, so no escape sequence is ever measured. */
 const PREVIEW_MAX = 60;
 
+/**
+ * Longest raw body a result line may print.
+ *
+ * A result is not a preview. On a refusal it carries the host's validation error, which is
+ * multi-line and arbitrarily long; rendered as-is it produced a 283-column frame line and
+ * Pi's TUI aborted (measured 2026-10-26 on 1.3.0: "Rendered line 39 exceeds terminal
+ * width"). The budget is applied to the RAW text before painting, so no escape sequence is
+ * ever measured, and it is clamped by the width the host asks for.
+ */
+const RESULT_MAX = 120;
+
 /** Compact-row head budget: 120 raw characters plus the ellipsis when something was cut. */
 const COMPACT_HEAD_MAX = 120;
 
@@ -48,6 +59,11 @@ function singleLine(text: string): RenderedLine {
     // Static one-line output: nothing is cached, so re-rendering needs no invalidation.
     invalidate: () => {},
   };
+}
+
+/** Collapse any run of whitespace — newlines included — into one space. */
+function collapseWhitespace(raw: string): string {
+  return raw.replace(/\s+/g, " ").trim();
 }
 
 /** Painted header shared by both call renderers: bold tool name under toolTitle, then the key value under accent. */
@@ -95,14 +111,26 @@ export function renderToolResultLine(
     return singleLine("");
   }
   // Tone reads ONLY the structured ok flag. Its absence means a result without details
-  // (an older entry or a foreign producer), which is rendered on the success side:
-  // the tool writes ok: false explicitly on every refusal.
-  const ok = result.details?.ok !== false;
-  const text = first.text;
-  const line = ok
-    ? theme.fg("success", "✓ ") + theme.fg("muted", text)
-    : theme.fg("warning", text);
-  return singleLine(line);
+  // (an older entry or a foreign producer), which is rendered on the success side: the
+  // tool writes ok: false explicitly on every refusal. The one exception is the host's own
+  // error flag: a call that never reached the handler (a validation failure) carries no
+  // details at all, and a green check on a refusal is a lie.
+  const ok = result.details?.ok !== false && result.isError !== true;
+  const raw = collapseWhitespace(first.text);
+  const prefix = ok ? theme.fg("success", "✓ ") : "";
+  const prefixWidth = ok ? 2 : 0;
+  return {
+    // The host tells us how wide the frame is, and aborts the whole TUI on a component
+    // that returns a wider line than that (measured 283 > 140 on 2026-10-26). Cutting the
+    // RAW text here keeps the visible width inside the frame at every terminal size, and
+    // painting afterwards means an escape sequence is never split.
+    render: (width: number) => {
+      const budget = Math.max(1, Math.min(RESULT_MAX, width - prefixWidth));
+      const body = raw.length > budget ? raw.slice(0, Math.max(0, budget - 1)) + "…" : raw;
+      return [prefix + theme.fg(ok ? "muted" : "warning", body)];
+    },
+    invalidate: () => {},
+  };
 }
 
 // --- Operator-facing text (pure, pinned by render.test.ts; index.ts only wires them) ---

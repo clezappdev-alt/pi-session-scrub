@@ -239,3 +239,57 @@ test("the result lines pluralize zero sessions", () => {
   assert.equal(formatTrashResult(0, 9), "Trashed 0 sessions. Remaining: 9.");
   assert.equal(formatRestoreResult(0), "Restored 0 sessions.");
 });
+
+// --- Result lines are bounded: a tool error must never break the frame -------------
+
+/** Visible characters of a painted line: the fake theme's tokens are structural, not text. */
+function visible(text: string): string {
+  return text.replace(/<[^>]+>/g, "");
+}
+
+const VALIDATION_FAILURE =
+  'Validation failed for tool "scrub_close":\n' +
+  "  - state: must be equal to constant\n" +
+  "  - state: must be equal to constant\n" +
+  "  - state: must be equal to constant\n" +
+  "  - state: must be equal to constant\n" +
+  "  - state: must match a schema in anyOf\n" +
+  "\nReceived arguments:\n{\n" +
+  '  "state": "traspaso",\n' +
+  '  "text": "x"\n}';
+
+test("a multiline refusal renders as one bounded line, not a 283-character frame line", () => {
+  // Measured on 2026-10-26: this exact payload rendered 283 columns wide and Pi's TUI
+  // aborts when a component emits a line wider than the terminal.
+  const line = renderToolResultLine(
+    { content: [{ type: "text", text: VALIDATION_FAILURE }], isError: true },
+    { expanded: false },
+    theme,
+  ).render(140);
+  assert.equal(line.length, 1, "a result line is always exactly one frame line");
+  assert.equal(line[0].includes("\n"), false, "a newline inside a frame line breaks the renderer");
+  assert.ok(visible(line[0]).length <= 140, `too wide: ${visible(line[0]).length}`);
+  assert.ok(line[0].includes("Validation failed"), "the first sentence is the part worth reading");
+});
+
+test("a narrow terminal still gets one line, cut with the ellipsis", () => {
+  const line = renderToolResultLine(
+    { content: [{ type: "text", text: "x".repeat(300) }], details: { ok: true } },
+    { expanded: false },
+    theme,
+  ).render(40);
+  assert.equal(line.length, 1);
+  assert.ok(visible(line[0]).length <= 40, `too wide: ${visible(line[0]).length}`);
+  assert.ok(visible(line[0]).endsWith("…"), "a cut line says so");
+});
+
+test("a host-flagged error result takes the warning tone even without details", () => {
+  // A validation failure never reaches the handler, so it carries no details.ok; the
+  // host still marks it as an error, and a green check on a refusal is a lie.
+  const line = renderToolResultLine(
+    { content: [{ type: "text", text: "invalid arguments" }], isError: true },
+    { expanded: false },
+    theme,
+  ).render(80);
+  assert.deepEqual(line, ["<warning>invalid arguments</warning>"]);
+});
