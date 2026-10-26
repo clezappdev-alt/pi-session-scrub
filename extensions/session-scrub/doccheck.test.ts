@@ -254,3 +254,21 @@ test("NB-04: the origin's traspaso is written after the destination is named", (
     "the origin's promise must be written after the destination is named",
   );
 });
+
+// --- WG-03: the /scrub:init write goes through the §9.6 guard ---
+
+test("WG-03: /scrub:init writes through appendPolicyBlock, never a bare writeFileSync", () => {
+  // The handler needs a Pi host, so its behavior cannot be a unit test — this is the
+  // structural net instead. `appendPolicyBlock` is where the `lstat` refusal runs, and a
+  // handler that wrote directly would drop the guard with no test noticing.
+  const handler = sourceSlice(INDEX_TS, "async function handleScrubInit(", "\n}\n");
+  assert.equal(
+    handler.includes("writeFileSync"),
+    false,
+    "/scrub:init must write AGENTS.md through appendPolicyBlock, not writeFileSync",
+  );
+  assert.ok(
+    handler.includes("appendPolicyBlock("),
+    "/scrub:init must write the policy block through appendPolicyBlock",
+  );
+});

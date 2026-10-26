@@ -6,15 +6,7 @@
 // handler registered — the absence is intentional, spec T9).
 
 import { join, basename } from "node:path";
-import {
-  renameSync,
-  statSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-  existsSync,
-  } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { Type, type Static } from "typebox";
 import {
   SessionManager,
@@ -55,6 +47,9 @@ import {
   backupSessionFile,
   snapshotFile,
   freshnessOf,
+  appendPolicyBlock,
+  moveToTrash,
+  moveFromTrash,
 } from "./sessionfs.ts";
 import {
   findLastMemoryWrite,
@@ -261,25 +256,9 @@ function readPolicyConfig(cwd: string): PolicyConfig {
 // FS helpers (throwing atomic moves; callers catch per file)
 // ---------------------------------------------------------------------------
 
-// `getTrashDir` lives in sessionfs.ts now, beside `getBackupDir`, so the invariant that
-// keeps backups out of the trash directory is visible where both are defined and testable.
-
-function moveToTrash(sessionPath: string, trashDir: string): string {
-  mkdirSync(trashDir, { recursive: true });
-  const trashPath = join(trashDir, basename(sessionPath));
-  renameSync(sessionPath, trashPath);
-  return trashPath;
-}
-
-function moveFromTrash(trashedPath: string, sessionsDir: string): string {
-  mkdirSync(sessionsDir, { recursive: true });
-  const restoredPath = join(sessionsDir, basename(trashedPath));
-  if (existsSync(restoredPath)) {
-    throw new Error(`restore target already exists: ${restoredPath}`);
-  }
-  renameSync(trashedPath, restoredPath);
-  return restoredPath;
-}
+// `getTrashDir`, `moveToTrash` and `moveFromTrash` live in sessionfs.ts now, beside
+// `getBackupDir`, so the invariants that keep backups out of the trash directory and keep
+// a restore from overwriting live data are visible where they are defined and testable.
 
 function listTrash(trashDir: string): string[] {
   try {
@@ -525,7 +504,7 @@ async function handleScrubInit(args: string, ctx: ExtensionCommandContext): Prom
   // A failed write is notified, never thrown (PB-04): every other error path
   // in this plugin notifies, and zero mutation must stay observable.
   try {
-    writeFileSync(agentsPath, `${existing}${plan.text}`);
+    appendPolicyBlock(agentsPath, existing, plan.text);
   } catch (err) {
     ctx.ui.notify(`Could not write AGENTS.md: ${errorMessage(err)}`, "warning");
     return;

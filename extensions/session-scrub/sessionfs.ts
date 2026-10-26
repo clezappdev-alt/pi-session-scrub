@@ -10,7 +10,7 @@
 // SessionManager call itself stays in index.ts: it is the one part that needs the host,
 // and it is straight-line code whose pieces are tested here.
 
-import { copyFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 import { readSnapshot, isFresh, type WriteSnapshot } from "./adopt.ts";
@@ -52,6 +52,31 @@ export function backupPathFor(sessionPath: string, backupDir: string): string {
 }
 
 /**
+ * The §9.6 guard: refuse to touch anything that is not a regular file.
+ *
+ * `copyFileSync` and `writeFileSync` both follow a symlink, so without this check
+ * "back up this file" becomes "copy any readable file into a known place", and a project
+ * that ships `AGENTS.md` as a link turns `/scrub:init` into an append to whatever that
+ * link points at. `lstat` is the whole point: `stat` resolves the link and would answer
+ * about the target, which is exactly the question this must not ask.
+ *
+ * A path that does not exist passes: the caller decides. `/scrub:init` creates
+ * `AGENTS.md` when it is absent, and refusing an absent file would break that path.
+ */
+export function refuseNonRegularFile(path: string, label: string): void {
+  let isRegularFile: boolean;
+  try {
+    isRegularFile = lstatSync(path).isFile();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
+  if (!isRegularFile) {
+    throw new Error(`refusing to write through ${label}: not a regular file (${path})`);
+  }
+}
+
+/**
  * Copy a session file aside before writing to it, and return the backup path.
  *
  * Called before every write, so the existing backup is overwritten each time: it always
@@ -59,6 +84,7 @@ export function backupPathFor(sessionPath: string, backupDir: string): string {
  * restoring. Keeping older copies would need a rotation policy this does not have.
  */
 export function backupSessionFile(sessionPath: string, backupDir: string): string {
+  refuseNonRegularFile(sessionPath, "the session file");
   mkdirSync(backupDir, { recursive: true });
   const backupPath = backupPathFor(sessionPath, backupDir);
   copyFileSync(sessionPath, backupPath);
@@ -99,4 +125,54 @@ export function freshnessOf(
   } catch {
     return { fresh: false, ageSeconds: Number.MAX_SAFE_INTEGER };
   }
+}
+
+// ---------------------------------------------------------------------------
+// The two moves, and the one write into a project file
+// ---------------------------------------------------------------------------
+
+/**
+ * Move a session file into the trash, and return where it landed.
+ *
+ * Throwing on purpose: the command catches per file and reports one `Skipped <id>`
+ * line, so one unreadable session cannot abort the batch.
+ */
+export function moveToTrash(sessionPath: string, trashDir: string): string {
+  mkdirSync(trashDir, { recursive: true });
+  const trashPath = join(trashDir, basename(sessionPath));
+  renameSync(sessionPath, trashPath);
+  return trashPath;
+}
+
+/**
+ * Move a trashed session back, refusing to overwrite anything already there.
+ *
+ * The refusal is the whole safety property of a restore: overwriting would destroy a
+ * live session with an older copy of one, and the trash copy must survive the refusal so
+ * the human can retry after deciding what to do.
+ */
+export function moveFromTrash(trashedPath: string, sessionsDir: string): string {
+  mkdirSync(sessionsDir, { recursive: true });
+  const restoredPath = join(sessionsDir, basename(trashedPath));
+  if (existsSync(restoredPath)) {
+    throw new Error(`restore target already exists: ${restoredPath}`);
+  }
+  renameSync(trashedPath, restoredPath);
+  return restoredPath;
+}
+
+/**
+ * `/scrub:init`'s append, behind the §9.6 guard.
+ *
+ * `existingText` is read and planned by the command (`policy.ts:planInitWrite` decides
+ * whether a block already exists); the text is passed in so this write is testable
+ * without a host. The guard runs before the write, never after.
+ */
+export function appendPolicyBlock(
+  agentsPath: string,
+  existingText: string,
+  blockText: string,
+): void {
+  refuseNonRegularFile(agentsPath, "AGENTS.md");
+  writeFileSync(agentsPath, `${existingText}${blockText}`);
 }
