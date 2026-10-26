@@ -359,3 +359,72 @@ test("the citation check catches a missing file, a line past the end, and a blan
   assert.deepEqual(staleCitations([at("real.ts", 9)], read), ["real.ts:9 is past the end of real.ts (4 lines)"]);
   assert.deepEqual(staleCitations([at("real.ts", 3)], read), ["real.ts:3 lands on a blank line"]);
 });
+
+// --- README anchor ------------------------------------------------------------
+//
+// `docs/behavior.md` declares the tag it reflects and the test above compares it
+// against `git describe --tags`. The README makes the same promise in prose, and
+// nothing checked it: it said `v0.4.2` while the newest tag was `v0.5.1`, and the
+// suite was green the whole time. A reader installing from that line installs the
+// wrong release.
+//
+// The README names a version twice — the anchor and the `pi install` line — and a
+// release has to move both. Comparing them to each other turns one forgotten line
+// into a failure instead of a second silent claim.
+
+const README_MD = readFileSync(join(REPO_ROOT, "README.md"), "utf8");
+
+/** The tag the README says it is anchored to. `undefined` when the line is gone. */
+function readmeAnchorTag(readme: string): string | undefined {
+  return readme.match(/>\s*Anchored to the released tag `([^`]+)`/)?.[1];
+}
+
+/** The tag the README tells a reader to install. `undefined` when the line is gone. */
+function readmeInstallTag(readme: string): string | undefined {
+  return readme.match(/pi install git:github\.com\/\S*?@(\S+)/)?.[1];
+}
+
+/**
+ * The mismatch between a document's declared tag and the tag git describes, or
+ * `undefined` when they agree.
+ *
+ * Takes the describe output rather than a tag, so a test can assert the failure
+ * without creating a tag: that is the only way to prove the check would catch the
+ * drift it exists to catch.
+ */
+function anchorMismatch(declared: string, describeOutput: string): string | undefined {
+  const actual = baseTag(describeOutput);
+  return declared === actual
+    ? undefined
+    : `the document declares ${declared}, but git describe anchors to ${actual}`;
+}
+
+test("the anchor check fails a declared tag that disagree with the tag git describes", () => {
+  assert.equal(anchorMismatch("v0.6.0", "v0.6.0"), undefined);
+  assert.equal(anchorMismatch("v0.6.0", "v0.6.0-3-gabc1234"), undefined, "commits after the tag are not drift");
+  assert.match(
+    anchorMismatch("v0.4.2", "v0.5.1-2-gabc1234") ?? "",
+    /declares v0\.4\.2, but git describe anchors to v0\.5\.1/,
+  );
+});
+
+test("README anchor: the declared tag, the install tag and git describe agree", (t) => {
+  const declared = readmeAnchorTag(README_MD);
+  assert.ok(declared, "README.md has no `> Anchored to the released tag ...` line");
+
+  const install = readmeInstallTag(README_MD);
+  assert.ok(install, "README.md has no `pi install git:github.com/…@<tag>` line");
+  assert.equal(
+    install,
+    declared,
+    `README.md tells a reader to install ${install} while declaring it reflects ${declared}`,
+  );
+
+  const describe = gitDescribe();
+  if (describe.skip) {
+    t.skip(describe.skip);
+    return;
+  }
+  const mismatch = anchorMismatch(declared!, describe.output!);
+  assert.equal(mismatch, undefined, `README.md: ${mismatch}`);
+});

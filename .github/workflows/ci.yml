@@ -26,6 +26,11 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The anchor tests compare a document against `git describe --tags`.
+          # The default depth of 1 fetches no tags, so `describe` fails and both
+          # tests skip — a green run would mean "not checked", not "correct".
+          fetch-depth: 0
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
