@@ -93,7 +93,7 @@ palabras, **nunca** una decisión.
 
 **La fila compacta de una machine row no lleva guess.** La fila compacta sólo renderiza
 filas `machine`, y su propuesta es el hecho `keep`; por eso el campo de guess se quitó del
-esquema (`formatCompactRow`, `render.ts:117`; `spec.md` UX-02). El guess vive donde
+esquema (`formatCompactRow`, `render.ts:243`; `spec.md` UX-02). El guess vive donde
 corresponde: en el pack de una fila `weak` (`weak-guess:`, `formatDigestPack`,
 `index.ts:1290`).
 
@@ -113,7 +113,7 @@ tomada; es deuda registrada, no comportamiento deseado.
 | --- | --- | --- |
 | **pack** (digest pack) | Bloque completo de una sesión: `head` (primeros 300c), `tail` (últimos 300c cronológicos), msgs, edad, created/modified ISO, rationale. | `formatDigestPack`, `index.ts:1290` |
 | **head** / **tail** | Las dos ventanas de texto del pack, 300 caracteres cada una. | `index.ts:818-819` |
-| **fila compacta** | Una línea, formato por defecto para filas `machine`: `<id> · <n>msgs · <d>d · named "<nombre>"\|unnamed · <head≤121>`. El `named "…"` es entrecomillado por el renderer; el `<head>` no lleva comillas propias (sólo se escapan las que traiga adentro). **Sin campo de guess.** | `render.ts:117` |
+| **fila compacta** | Una línea, formato por defecto para filas `machine`: `<id> · <n>msgs · <d>d · named "<nombre>"\|unnamed · <head≤121>`. El `named "…"` es entrecomillado por el renderer; el `<head>` no lleva comillas propias (sólo se escapan las que traiga adentro). **Sin campo de guess.** | `render.ts:243` |
 | **pack cap** | Máximo 20 packs por corrida; el resto se lista como `deferred`. | `index.ts:820` |
 | **deferred** | Sesiones que no entraron en el cap: sólo ids, sin packs ni guesses. | `index.ts:1464` |
 
