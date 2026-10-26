@@ -18,7 +18,7 @@
 /** Tools that CREATE a memory. Reads deliberately do not count. */
 export const MEMORY_WRITE_TOOLS: readonly string[] = ["mem_save", "mem_session_summary"];
 
-import { STATE, formatName, parseName } from "./name.ts";
+import { STATE, formatName, parseName, LINEAGE_MARKER } from "./name.ts";
 
 export interface MemoryRef {
   /** From the tool result. Absent until the tool has reported success. */
@@ -101,9 +101,6 @@ export function extractMemoryId(structured: unknown): number | undefined {
   return undefined;
 }
 
-/** Short id as it appears in a session name: the first 8 hex characters. */
-const SHORT_ID_LENGTH = 8;
-
 /**
  * Remove a leading lineage marker from free text.
  *
@@ -116,9 +113,14 @@ const SHORT_ID_LENGTH = 8;
  * Stripping the leading marker keeps the text at exactly one, so a long chain stays one
  * readable line. Only the leading one is removed: a marker appearing later in the text is
  * part of the human's words.
+ *
+ * The pattern is shared with `closeName` (name.ts) and accepts a variable width (NB-12):
+ * after NB-10 a stored name can carry nine or fifteen hex characters, while the names
+ * already on disk carry exactly eight. Raising the ceiling changes nothing for them —
+ * the minimum stays at eight, and a hex word without the trailing `·` is still text.
  */
 export function stripLineage(text: string): string {
-  return text.replace(/^(?:desde\s+)?[0-9a-f]{8}\s*·\s*/, "").trim();
+  return text.replace(LINEAGE_MARKER, "").trim();
 }
 
 /**
@@ -138,24 +140,30 @@ export function stripLineage(text: string): string {
  * the picker renders nothing but the name; without the id in the name the relation is
  * invisible until a session is opened.
  *
+ * The id arrives already abbreviated (NB-10): the caller derives the origin's width from
+ * the population in play — `uniqueAbbreviations` over every project session plus the
+ * origin, exactly what /scrub:audit and /scrub:triage do — because a fixed slice of eight
+ * collides in uuid v7 bursts (measured: two handoffs four seconds apart shared their first
+ * eight characters, so the child's marker also pointed at itself). No width is assumed
+ * here; the function uses what the caller computed, verbatim.
+ *
  * Returns undefined when there is no next step to carry, because a handoff with nothing to
  * hand over is not a handoff.
  */
 export function planHandoffNames(
   originName: string,
   argumentText: string,
-  originSessionId: string,
+  originAbbrev: string,
 ): { next: string; originName: string; destinationName: string } | undefined {
   const parsed = parseName(originName);
   const fromArgs = argumentText.trim();
   const candidate = fromArgs.length > 0 ? fromArgs : parsed.text;
   const next = stripLineage(candidate);
   if (next.length === 0) return undefined;
-  const shortId = originSessionId.slice(0, SHORT_ID_LENGTH);
   return {
     next,
-    originName: formatName(STATE.traspaso, `${shortId} · ${next}`),
-    destinationName: formatName(STATE.pausa, `desde ${shortId} · ${next}`),
+    originName: formatName(STATE.traspaso, `${originAbbrev} · ${next}`),
+    destinationName: formatName(STATE.pausa, `desde ${originAbbrev} · ${next}`),
   };
 }
 

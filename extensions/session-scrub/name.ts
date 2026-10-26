@@ -47,6 +47,19 @@ export interface ParsedName {
 }
 
 /**
+ * A leading lineage marker in free text: `desde <abbr> · `.
+ *
+ * The syntax stays `desde` and stays in front (S8): `←` would save four characters at
+ * the cost of a second syntax on disk forever, and the marker has to strip from names
+ * already written with `desde`. The abbreviation has no fixed width — NB-10 derives it
+ * from the session population, and measured uuid v7 bursts agree past eight and even
+ * past twelve characters — so the floor stays at the eight characters the names already
+ * on disk use and the ceiling is open. A marker appearing later in the text is the
+ * human's words, never the marker.
+ */
+export const LINEAGE_MARKER = /^(desde\s+)?[0-9a-f]{8,}\s*·\s*/;
+
+/**
  * Parse a session name into state and free text.
  *
  * Only a prefix at position 0 followed by `:` counts. "reabierto:" must not read as
@@ -86,6 +99,36 @@ export function formatName(state: State, text: string): string {
   // of stacking a second one on top.
   const body = parseName(text).text.trim();
   return body.length === 0 ? `${state}:` : `${state}: ${body}`;
+}
+
+/**
+ * Compose the name scrub_close writes, honouring the lineage marker.
+ *
+ * A `/scrub:handoff` writes the parent's id into the free text (`pausa: desde <abbr> · …`).
+ * Rewriting that whole text — what handleScrubClose did before — erased the marker, and the
+ * marker is the only thing in the picker that says where the work came from (owner report,
+ * measured 13:42 vs 13:46 in the same session's own file).
+ *
+ * The rule is therefore: a marker the current name carries is kept verbatim and only the
+ * free text is replaced; a rename tool has no way to know where the work came from, so it
+ * never invents one (S4 / NB-11). The text budget applies to the new text, never to the
+ * marker. When a marker is preserved, a marker-shaped head on the incoming text is
+ * stripped instead of stacked: the human may retype the old name wholesale — the same
+ * reason formatName is idempotent — and a name carries at most one marker, always the
+ * parent's (S6 / NB-13). Without an inherited marker the text is left untouched: stripping
+ * there would delete the human's own words to enforce a rule the session has no marker
+ * under in the first place.
+ */
+export function closeName(currentName: string, state: State, text: string): string {
+  const currentText = parseName(currentName).text.trim();
+  const marker = currentText.match(LINEAGE_MARKER)?.[0] ?? "";
+  const body = marker === "" ? text : text.replace(LINEAGE_MARKER, "");
+  const clipped = body.trim().slice(0, MAX_TEXT).trim();
+  // With no text to carry, a preserved marker would end in a dangling separator
+  // (`hecho: desde 01a17881 ·`), which reads as a truncated name rather than a short one.
+  // The marker alone still says where the work came from, so only the separator goes.
+  const head = clipped === "" ? marker.replace(/\s*·\s*$/, "") : marker;
+  return formatName(state, `${head}${clipped}`);
 }
 
 /**

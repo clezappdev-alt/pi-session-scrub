@@ -18,6 +18,7 @@ import {
   verdictFromName,
   resolveVerdict,
   proposeNameFromTopicKey,
+  closeName,
 } from "./name.ts";
 
 const ALL_STATES = [
@@ -226,4 +227,70 @@ test("a long topic key is truncated rather than left unbounded", () => {
   const long = "session-scrub:" + "palabra-".repeat(30);
   const proposal = proposeNameFromTopicKey(long, "session-scrub");
   assert.equal(proposal.length, 60);
+});
+
+// ---------------------------------------------------------------------------
+// closeName — scrub_close honours the lineage marker
+// ---------------------------------------------------------------------------
+
+test("closeName keeps the inherited marker and replaces only the free text", () => {
+  // Owner report (S1): scrub_close rewrote the whole text, and the marker — the only
+  // thing in the picker pointing at the parent — was gone four minutes after the handoff
+  // wrote it. The rule is keep-verbatim, replace-text-only (NB-11).
+  assert.equal(
+    closeName(
+      "pausa: desde 01a177dc · falta el spec",
+      STATE.hecho,
+      "spec entregado y mergeado",
+    ),
+    "hecho: desde 01a177dc · spec entregado y mergeado",
+  );
+});
+
+test("closeName never invents a marker", () => {
+  // A rename tool has no way to know where the work came from (S4): no marker in, no
+  // marker out — and the text goes in exactly as given.
+  assert.equal(
+    closeName(
+      "espera: instalar v0.4.0 y correr la mitad interactiva",
+      STATE.espera,
+      "instalar v0.4.0 ya taggeado y pusheado",
+    ),
+    "espera: instalar v0.4.0 ya taggeado y pusheado",
+  );
+});
+
+test("the close text budget applies to the text, never to the marker", () => {
+  const long = "palabra ".repeat(20);
+  const closed = closeName("pausa: desde 01a177dc · falta", STATE.pausa, long);
+  assert.ok(closed.startsWith("pausa: desde 01a177dc · "), `marker must survive: ${closed}`);
+  assert.ok(
+    closed.length <= "pausa: desde 01a177dc · ".length + 60,
+    `text must be budgeted, got ${closed.length} chars: ${closed}`,
+  );
+});
+
+test("the close text budget applies without a marker too", () => {
+  const long = "palabra ".repeat(20);
+  const closed = closeName("pausa: falta", STATE.pausa, long);
+  assert.equal(closed, "pausa: " + long.slice(0, 60).trim());
+});
+
+test("closing a session that already carries a marker never produces two (NB-13)", () => {
+  // The human may retype the old name wholesale — the same reason formatName is
+  // idempotent. Preserving one marker must not stack a second behind it (S6).
+  const closed = closeName(
+    "pausa: desde 01a177dc · falta el spec",
+    STATE.pausa,
+    "desde 01a177dc · falta el spec",
+  );
+  assert.equal(closed, "pausa: desde 01a177dc · falta el spec");
+  assert.equal((closed.match(/desde/g) ?? []).length, 1);
+});
+test("closing with no text keeps the marker without a dangling separator", () => {
+  // A state-only close is legitimate (`hecho:`), and so is keeping the lineage. What is
+  // not legitimate is a marker that ends in ` ·`, which reads as a truncated name.
+  assert.equal(closeName("pausa: desde 01a177dc · algo", STATE.hecho, ""), "hecho: desde 01a177dc");
+  assert.equal(closeName("pausa: desde 01a177dc · algo", STATE.hecho, "   "), "hecho: desde 01a177dc");
+  assert.equal(closeName("pausa: algo", STATE.hecho, ""), "hecho:");
 });
