@@ -3,10 +3,9 @@
 Micro-plugin for Pi. Keeps the `/resume` list clean and descriptive
 with **zero ceremony and zero tokens by default**.
 
-Authoritative plugin knowledge is the GLOBAL skill `pi-plugin-dev`
-(`~/.pi/agent/skills/pi-plugin-dev/`, distilled from https://pi.dev/docs/latest,
-2026-09-11, visible from every project). Read it (`/skill:pi-plugin-dev`)
-before changing extension code or packaging.
+Authoritative plugin knowledge is the global skill `pi-plugin-dev`, distilled from
+https://pi.dev/docs/latest — read that before changing extension code or
+packaging. If you do not have the skill, the upstream docs are the same source.
 
 The problem to solve lives in `PRD.md` — input for this project’s SDD flow,
 not decisions. This file is the working contract: repo layout and workflow.
@@ -14,16 +13,20 @@ not decisions. This file is the working contract: repo layout and workflow.
 ## Structure
 
 ```
-PI_Agent-MyPlugins/              ← container (own repo, this dir EXCLUDED via its .gitignore)
-└── session-scrub/               ← INDEPENDENT git root (own Engram project)
-    ├── AGENTS.md                ← THIS file
-    ├── README.md                ← human-facing install/usage
-    ├── package.json             ← pi-package manifest (extensions entry)
-    ├── PRD.md                  ← product requirements (problem + context, no decisions)
-    ├── .gitignore               ← local-only: .agents/ scratch/ *.local.md
-    └── extensions/
-        └── session-scrub/
-            └── index.ts
+session-scrub/                  ← this repo, its own git root
+├── AGENTS.md                   ← THIS file
+├── README.md                   ← external face: install, commands, support
+├── CONTRIBUTING.md             ← setup, the check command, the fork flow
+├── SECURITY.md                 ← disclosure channel, data map, runtime baseline
+├── LICENSE, CODE_OF_CONDUCT.md, CHANGELOG.md
+├── PRD.md                      ← product requirements (problem + context, no decisions)
+├── .github/                    ← CI workflow, issue templates, PR template
+├── .gitignore                  ← local-only: .agents/ scratch/ odd/ *.local.md
+├── tsconfig.json               ← strict typecheck, no build step
+└── extensions/
+    └── session-scrub/
+        ├── index.ts            ← the extension entry point (Pi host)
+        └── *.ts, *.test.ts     ← host-free modules and their tests
 ```
 
 ## Conventions
@@ -52,6 +55,15 @@ A change opens with **`spec.md` (the requirement delta) and `tasks.md`**. Propos
 verify-report, sync-report and archive-report are for changes big enough to earn them, not
 the default. `openspec/changes/archive/` is frozen history and is never maintained.
 
+### Tracked config vs machine config
+
+`openspec/config.yaml` is tracked, so it carries **only facts that are true in every
+clone**: the project, the paths relative to the repo root, the exact verification
+commands, the constraints. A machine-scoped pointer — an absolute root, a path under
+a home directory, a list of locally installed skills — belongs in
+`openspec/config.local.yaml`, which is git-ignored. A stranger cloning this repo gets
+nothing about someone else's machine, and nothing here breaks when the repo moves.
+
 **Why requirements stay tracked.** The naming block once shipped with no requirement at all
 and nobody noticed for twelve days; the canonical spec is what later let a read find
 `REQ-03`, a requirement that described a parser the code never had. A requirement that
@@ -67,8 +79,9 @@ a local database.
 
 ## How to work here
 
-1. Read the global `pi-plugin-dev` skill first (`/skill:pi-plugin-dev`), then the matching `references/`.
+1. Read the global `pi-plugin-dev` skill first (or the upstream docs it distills), then the matching `references/`.
 2. Iterate without installing:
-   `pi -e <repo>/session-scrub/extensions/session-scrub/index.ts`, then `/reload`.
-3. Install for real (global) only on tagged versions:
-   `pi install <repo>/session-scrub`; toggle with `pi config`.
+   `pi -e ./extensions/session-scrub/index.ts`, then `/reload`.
+3. Verify as a stranger would: `npm ci --ignore-scripts && npm run check`.
+4. Install for real (global) only on tagged versions:
+   `pi install git:github.com/clezappdev-alt/pi-session-scrub@<tag>`; toggle with `pi config`.

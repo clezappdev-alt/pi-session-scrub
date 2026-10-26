@@ -1,0 +1,35 @@
+name: Feature request
+description: A problem you hit, and the context around it
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem and the context, not the solution. The design of this
+        plugin is deliberate — zero tokens by default, opt-in commands only,
+        reversible moves — and a demanded solution usually skips that reasoning.
+        A well-described problem is what makes a design conversation possible.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and where does the plugin get in the way?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: How your sessions are organized, what you tried, what the alternative costs you today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: ideas
+    attributes:
+      label: Ideas you considered (optional)
+      description: Anything you have in mind, including approaches you already rejected.
+    validations:
+      required: false

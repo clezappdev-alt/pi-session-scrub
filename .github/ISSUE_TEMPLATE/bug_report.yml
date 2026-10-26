@@ -1,0 +1,82 @@
+name: Bug report
+description: Something the plugin did, or stopped doing, and it should not have
+labels: [bug, needs-repro]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A reproduction is the difference between a bug report and a guess. If you
+        can, include the smallest sequence of commands that shows the problem.
+
+        **Remove secrets before pasting anything**: tokens, keys, authorization
+        headers, and any path you do not want in a public issue.
+
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: The observed behavior, in your own words. Paste the actual output, not a summary of it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What the plugin should have done instead, and why you think so.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. open Pi in a project with sessions
+        2. run /scrub:audit
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: pi-session-scrub version
+      description: The tag you installed, or the `version` in the `package.json` you cloned.
+      placeholder: v0.5.1
+    validations:
+      required: true
+
+  - type: input
+    id: pi-version
+    attributes:
+      label: Pi version
+      description: Output of `pi --version`.
+      placeholder: 1.2.0
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS and shell
+      placeholder: Ubuntu 24.04, zsh 5.9
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: Only what matters, with secrets removed.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed tokens, keys and anything else private from this report.
+          required: true

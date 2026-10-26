@@ -3,13 +3,44 @@
   "version": "0.5.1",
   "description": "Keep Pi session list clean and descriptive — zero ceremony, opt-in commands only.",
   "author": "clezapp",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "sessions",
+    "session-management",
+    "resume",
+    "trash"
+  ],
   "type": "module",
   "pi": {
-    "extensions": ["./extensions/session-scrub/index.ts"]
+    "extensions": [
+      "./extensions/session-scrub/index.ts"
+    ]
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node --test \"extensions/session-scrub/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "@types/node": "22.20.5",
+    "typebox": "1.4.3",
+    "typescript": "5.7.3"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=1.2.0",
     "typebox": "*"
-  }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clezappdev-alt/pi-session-scrub.git"
+  },
+  "bugs": "https://github.com/clezappdev-alt/pi-session-scrub/issues",
+  "homepage": "https://github.com/clezappdev-alt/pi-session-scrub#readme"
 }

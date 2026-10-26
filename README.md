@@ -8,8 +8,46 @@ Keep your Pi `/resume` list clean and descriptive — without the per-session op
 > code by symbol: [`docs/behavior.md`](docs/behavior.md).
 > Vocabulary used across the code and the spec, one term per line with its `path:line`:
 > [`docs/glossary.md`](docs/glossary.md) (Spanish, owner-facing).
-> Anchored to the released tag `v0.4.2`; describes `master` as reconciled on 2026-10-26 — that
+> Anchored to the released tag `v0.5.1`; describes `master` as reconciled on 2026-10-26 — that
 > reconciliation is what the tag contains — and is re-reconciled at each tag, not per commit.
+> The three `docs/` files above are written in Spanish, for the owner; this README is the
+> English entry point.
+
+**Status:** beta. The command surface is usable daily and still changes between
+minor versions. Install a tag, never `master`.
+
+**Requirements:** Pi `>=1.2.0`, Node.js `>=22.19.0`. The plugin has no runtime
+dependencies of its own — Pi already provides its libraries.
+
+## Install
+
+```bash
+pi install git:github.com/clezappdev-alt/pi-session-scrub@v0.5.1
+```
+
+Then enable it in `pi config` and reload. To pin a different release, change the
+tag: a git ref is pinned, and `pi update --extensions` reconciles the checkout
+without moving the ref you selected.
+
+To try it without installing anything, load the extension straight from a clone:
+
+```bash
+pi -e ./extensions/session-scrub/index.ts
+```
+
+## Support
+
+- **Bugs and feature requests:** the [issue tracker](https://github.com/clezappdev-alt/pi-session-scrub/issues).
+  A reproduction is what moves an issue fastest.
+- **Security problems:** privately, through
+  [GitHub Security Advisories](https://github.com/clezappdev-alt/pi-session-scrub/security/advisories/new) —
+  never a public issue. [`SECURITY.md`](SECURITY.md) says what to include.
+- **Contributing:** [`CONTRIBUTING.md`](CONTRIBUTING.md) has the setup, the one
+  check command, and the fork flow.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
 
 ## Why
 
@@ -159,9 +197,11 @@ the plugin never renames anything by itself.
 ## Dev
 
 ```bash
-# iterate locally without installing
+npm ci --ignore-scripts      # once, from the lockfile
+npm run check                # typecheck + tests
 pi -e ./extensions/session-scrub/index.ts
-
-# install for real (global, tagged versions only)
-pi install /home/cleceta/AI_projects_V3/PI_Agent-MyPlugins/session-scrub
+# then, inside Pi: /reload
 ```
+
+The setup, the check command and the fork flow are documented in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
