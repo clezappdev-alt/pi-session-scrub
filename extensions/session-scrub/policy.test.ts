@@ -189,3 +189,40 @@ test("planInitWrite appends when the only markers are inside a fence", () => {
   assert.equal(plan.kind, "append");
   assert.ok(plan.kind === "append" && plan.text.includes(POLICY_START));
 });
+
+test("a tilde fence hides markers the same way a backtick fence does", () => {
+  const text = [
+    "~~~md",
+    POLICY_START,
+    "ephemeral-flows: tilde-flow",
+    POLICY_END,
+    "~~~",
+    "",
+  ].join("\n");
+  assert.equal(parsePolicyBlock(text), undefined);
+  assert.deepEqual(planInitWrite(text), { kind: "append", text: `${text.length > 0 && !text.endsWith("\n") ? "\n" : ""}\n${POLICY_TEMPLATE}` });
+});
+
+test("a marker quoted as inline code is text, not a marker", () => {
+  const quoted = `Run \`${POLICY_START}\` in the project root.`;
+  assert.equal(parsePolicyBlock(quoted), undefined);
+  assert.equal(planInitWrite(quoted).kind, "append");
+});
+
+test("a real block after an inline-code quote still parses", () => {
+  const text = [
+    `Quote: \`${POLICY_START}\` is the marker.`,
+    POLICY_START,
+    "ephemeral-flows: real-flow",
+    POLICY_END,
+  ].join("\n");
+  assert.deepEqual(parsePolicyBlock(text), { ephemeralFlows: ["real-flow"] });
+});
+
+test("the template itself carries both markers, in order, and parses as empty", () => {
+  const lines = POLICY_TEMPLATE.split("\n").filter((l) => l.trim().length > 0);
+  assert.equal(lines[0], POLICY_START, "the template must open with the start marker");
+  assert.equal(lines[lines.length - 1], POLICY_END, "the template must close with the end marker");
+  assert.ok(POLICY_TEMPLATE.includes("ephemeral-flows: <flow-name-1>"), "the placeholder must be present");
+  assert.deepEqual(parsePolicyBlock(POLICY_TEMPLATE), { ephemeralFlows: [] });
+});

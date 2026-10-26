@@ -55,8 +55,25 @@ export interface PolicyConfig {
 // Pure functions (no ctx, no fs)
 // ---------------------------------------------------------------------------
 
+/**
+ * Fence openers and closers, as Markdown defines them: three or more backticks,
+ * or three or more tildes. A `~~~` block is a code block to every renderer, so it
+ * has to be one here too — otherwise the exact bug this module fixes (a quoted
+ * template read as live policy) comes back one doc-format away.
+ */
 function isFenceLine(trimmed: string): boolean {
-  return trimmed.startsWith("```");
+  return /^(?:`{3,}|~{3,})/.test(trimmed);
+}
+
+/**
+ * Drop inline code spans before looking for markers.
+ *
+ * A marker quoted as `` `<!-- pi-session-scrub:start -->` `` is documentation,
+ * not a block. Span-splitting happens before the marker test and never touches
+ * fence lines, which are handled first.
+ */
+function withoutInlineCode(line: string): string {
+  return line.replace(/`[^`]*`/g, "");
 }
 /** F4 grammar, bounded (PB-01) and fence-aware (PB-02):
  *
@@ -80,11 +97,12 @@ export function parsePolicyBlock(text: string): PolicyConfig | undefined {
       continue;
     }
     if (inFence) continue;
+    const text = withoutInlineCode(line);
     if (!inBlock) {
-      if (line.includes(POLICY_START)) inBlock = true;
+      if (text.includes(POLICY_START)) inBlock = true;
       continue;
     }
-    if (line.includes(POLICY_END)) return { ephemeralFlows: flows };
+    if (text.includes(POLICY_END)) return { ephemeralFlows: flows };
     if (line.length === 0 || line.startsWith("#")) continue;
     if (line.startsWith("ephemeral-flows:")) {
       const value = line.slice("ephemeral-flows:".length).trim();
@@ -127,7 +145,7 @@ export function planInitWrite(existing: string): InitWritePlan {
       continue;
     }
     if (inFence) continue;
-    if (line.includes(POLICY_START)) return { kind: "exists", line: i + 1 };
+    if (withoutInlineCode(line).includes(POLICY_START)) return { kind: "exists", line: i + 1 };
   }
   // Keep the historical spacing: one blank line before the block when the
   // file ends mid-line or is empty, none when it already ends with a newline.
