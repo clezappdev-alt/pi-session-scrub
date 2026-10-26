@@ -16,6 +16,7 @@ import {
   planHandoffNames,
   buildHandoffMessage,
   MEMORY_WRITE_TOOLS,
+  widenSelfToken,
 } from "./handoff.ts";
 import { uniqueAbbreviations, abbrevOf } from "./ids.ts";
 
@@ -263,6 +264,59 @@ test("the marker forms match what planHandoffNames writes", () => {
 // planHandoffNames — the two names of a handoff
 // ---------------------------------------------------------------------------
 
+test("a middle session re-emits the inherited parent and adds its own abbreviation (NB-14)", () => {
+  // S2: the origin's `desde <parent>` must survive the rename, or the parent vanishes
+  // from the picker the moment the middle session hands off.
+  const plan = planHandoffNames("pausa: desde 01a177dc · falta el spec", "", "01a17881");
+  assert.ok(plan);
+  assert.equal(plan.originName, "traspaso: desde 01a177dc · 01a17881 · falta el spec");
+  assert.equal(plan.destinationName, "pausa: desde 01a17881 · falta el spec");
+});
+
+test("the text carried forward never contains any part of the head (S5)", () => {
+  const plan = planHandoffNames("pausa: desde 01a177dc · falta el spec", "", "01a17881");
+  assert.equal(plan?.next, "falta el spec");
+});
+
+test("stripping a two-token head removes both tokens, not just the marker", () => {
+  assert.equal(stripLineage("desde 01a177dc · 01a17881 · falta el spec"), "falta el spec");
+});
+
+test("a first-generation origin stays byte-identical to the one-token form (S4)", () => {
+  // Names this change starts writing for a first handoff must match what v0.4.1 wrote:
+  // `traspaso: <self> · <next>` and `pausa: desde <self> · <next>`.
+  const plan = planHandoffNames("pausa: falta el spec", "", "01a11719");
+  assert.equal(plan?.originName, "traspaso: 01a11719 · falta el spec");
+  assert.equal(plan?.destinationName, "pausa: desde 01a11719 · falta el spec");
+});
+
+test("the chain A→B→C keeps two tokens per name and no grandparent (S3)", () => {
+  const ids = [
+    "01a11719-aaaa-7bbb-8ccc-ddddeeeeffff",
+    "01a11c59-bbbb-7bbb-8ccc-ddddeeeeffff",
+    "01a11f00-cccc-7bbb-8ccc-ddddeeeeffff",
+  ];
+  const [a, b, c] = ids.map((id) => abbrevOf(uniqueAbbreviations(ids), id));
+  // A hands off to B: A shows its own id, B inherits it.
+  const first = planHandoffNames("pausa: siguiente paso", "", a);
+  assert.equal(first?.originName, `traspaso: ${a} · siguiente paso`);
+  assert.equal(first?.destinationName, `pausa: desde ${a} · siguiente paso`);
+  // B hands off to C: B keeps `desde ${a}` and now also shows ${b}; C says only ${b}.
+  const second = planHandoffNames(first!.destinationName, "", b);
+  assert.equal(second?.originName, `traspaso: desde ${a} · ${b} · siguiente paso`);
+  assert.equal(second?.destinationName, `pausa: desde ${b} · siguiente paso`);
+  assert.ok(!second!.destinationName.includes(a), "C must not carry a grandparent");
+  // Neither the name nor the carried text repeats a head token.
+  assert.equal(second!.next, "siguiente paso");
+  assert.ok(!second!.next.includes(a) && !second!.next.includes(b), "the next step is the text");
+  assert.equal(
+    (second!.originName.match(new RegExp(`\\b${b}\\b`, "g")) ?? []).length,
+    1,
+    "B's own token appears exactly once",
+  );
+  assert.ok(!first!.destinationName.includes(c));
+});
+
 test("the origin is marked as handed off and the destination as received", () => {
   const plan = planHandoffNames("traspaso: falta probar el traspaso", "", "01a11719");
   assert.ok(plan);
@@ -317,16 +371,18 @@ test("a handoff from a pausa session still marks the origin as handed off", () =
   assert.equal(plan?.destinationName, "pausa: desde 01a11719 · falta el spec");
 });
 
-test("a chain does not accumulate ancestry", () => {
-  // Handing off from a session that already carries a marker must produce exactly one.
+test("a chain does not accumulate ancestry beyond one parent plus self (S3)", () => {
+  // Handing off from a session that already carries a head must produce exactly one head
+  // — two tokens, parent first — not a wall of `desde` clauses, and not the old loss that
+  // dropped the inherited parent (S2: A vanished from the picker when B handed off).
   const first = planHandoffNames("traspaso: falta probar", "", "01a11719");
   const second = planHandoffNames(first!.destinationName, "", "01a11c59");
   assert.equal(
     second!.originName,
-    "traspaso: 01a11c59 · falta probar",
-    "the previous marker must not be re-embedded",
+    "traspaso: desde 01a11719 · 01a11c59 · falta probar",
+    "the inherited parent is re-emitted, and exactly once",
   );
-  assert.equal(second!.destinationName, "pausa: desde 01a11c59 · falta probar");
+  assert.equal((second!.originName.match(/desde/g) ?? []).length, 1);
 });
 
 test("a three-session chain carries exactly the parent's marker, never the grandparent's (NB-13)", () => {
@@ -471,4 +527,32 @@ test("the message stays short enough to cost almost nothing per turn", () => {
 test("the message does not claim a memory it does not have", () => {
   const message = buildHandoffMessage({ ...ORIGIN, memory: undefined });
   assert.ok(!/memoria/i.test(message), "must not mention memory when none was written");
+});
+// widenSelfToken — the own token must not read as the inherited one (measured in the bench)
+
+const B_ID = "01a178c6-f9d3-70a5-85e3-41553ce88c1e";
+
+test("widenSelfToken leaves a token that already differs alone", () => {
+  assert.equal(widenSelfToken("01a178c6-f", "01a178c6", B_ID), "01a178c6-f");
+});
+
+test("widenSelfToken leaves a token alone when there is no parent token", () => {
+  assert.equal(widenSelfToken("01a178c6", undefined, B_ID), "01a178c6");
+});
+
+test("widenSelfToken widens a token that equals the inherited parent token", () => {
+  // The parent session had no file yet, so it was not in the population and the origin's
+  // own abbreviation collided with the token it inherited from its own name.
+  assert.equal(widenSelfToken("01a178c6", "01a178c6", B_ID), "01a178c6-f");
+});
+
+test("widenSelfToken never returns a token ending in the uuid separator", () => {
+  // Nine characters (`01a178c6-`) already differs from the parent, but a token ending in
+  // `-` reads like a typo; the loop keeps going until it ends in hex.
+  const widened = widenSelfToken("01a178c6", "01a178c6", B_ID);
+  assert.ok(!widened.endsWith("-"), `expected a token ending in hex, got ${widened}`);
+});
+
+test("widenSelfToken stops at the full id when the id cannot differ", () => {
+  assert.equal(widenSelfToken("ab", "ab", "ab"), "ab");
 });

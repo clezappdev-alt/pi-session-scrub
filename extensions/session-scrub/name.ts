@@ -47,17 +47,62 @@ export interface ParsedName {
 }
 
 /**
- * A leading lineage marker in free text: `desde <abbr> · `.
+ * The lineage head (NB-15): at most two tokens at position 0, parent first, then the
+ * session's own abbreviation (S3):
  *
- * The syntax stays `desde` and stays in front (S8): `←` would save four characters at
- * the cost of a second syntax on disk forever, and the marker has to strip from names
- * already written with `desde`. The abbreviation has no fixed width — NB-10 derives it
- * from the session population, and measured uuid v7 bursts agree past eight and even
- * past twelve characters — so the floor stays at the eight characters the names already
- * on disk use and the ceiling is open. A marker appearing later in the text is the
- * human's words, never the marker.
+ *     [desde <parent> · ][<self> · ]<free text>
+ *
+ * The literal `desde` is what marks a parent — a bare leading hex token is the session's
+ * own id, written by the plugin at handoff time. No sigil and no second delimiter: every
+ * name already on disk (`traspaso: <self> · …`, `pausa: desde <parent> · …`) already fits
+ * this reading, so legacy names parse under the same pattern (S4).
+ *
+ * The abbreviation has no fixed width — NB-10 derives it from the session population, and
+ * measured uuid v7 bursts agree past eight and even past twelve characters — so the floor
+ * stays at the eight characters the names already on disk use and the ceiling is open.
+ * A token appearing later in the text is the human's words, never the head (S5).
  */
-export const LINEAGE_MARKER = /^(desde\s+)?[0-9a-f]{8,}\s*·\s*/;
+export const LINEAGE_HEAD = /^(?:(desde\s+)([0-9a-f]{8,})\s*·\s*)?(?:([0-9a-f]{8,})\s*·\s*)?/;
+
+/** The head of a text, split into its tokens and the free text that follows. */
+export interface LineageSplit {
+  /** Inherited parent token — present only when the literal `desde` precedes it (S3). */
+  parent: string | undefined;
+  /** The session's own abbreviation, present only when followed by a separator. */
+  self: string | undefined;
+  /** The free text after the head. */
+  rest: string;
+}
+
+/**
+ * Split the lineage head off the front of a free text.
+ *
+ * The one helper that owns the grammar (NB-15): `stripLineage` (handoff.ts) and
+ * `closeName` route through it instead of matching their own patterns, so a head can
+ * never be stripped by one caller and written back differently by another.
+ */
+export function splitLineage(text: string): LineageSplit {
+  const match = LINEAGE_HEAD.exec(text);
+  return {
+    parent: match?.[2],
+    self: match?.[3],
+    rest: match !== null && match[0].length > 0 ? text.slice(match[0].length) : text,
+  };
+}
+
+/**
+ * Re-emit a head from its two optional tokens, in grammar order (S3).
+ *
+ * Empty parts are simply absent, and an empty head formats to "" — the caller decides
+ * whether that means "no lineage to show".
+ */
+export function formatLineageHead(
+  parent: string | undefined,
+  self: string | undefined,
+): string {
+  const parentPart = parent !== undefined ? `desde ${parent} · ` : "";
+  return parentPart + (self !== undefined ? `${self} · ` : "");
+}
 
 /**
  * Parse a session name into state and free text.
@@ -102,33 +147,36 @@ export function formatName(state: State, text: string): string {
 }
 
 /**
- * Compose the name scrub_close writes, honouring the lineage marker.
+ * Compose the name scrub_close writes, honouring the lineage head.
  *
- * A `/scrub:handoff` writes the parent's id into the free text (`pausa: desde <abbr> · …`).
- * Rewriting that whole text — what handleScrubClose did before — erased the marker, and the
- * marker is the only thing in the picker that says where the work came from (owner report,
- * measured 13:42 vs 13:46 in the same session's own file).
+ * A `/scrub:handoff` writes lineage tokens into the free text (`pausa: desde <abbr> · …`,
+ * and after NB-14 the origin carries `desde <parent> · <self> · …`). Rewriting that whole
+ * text — what handleScrubClose did before — erased the head, and the head is the only
+ * thing in the picker that says where the work came from and where it continues (owner
+ * report, measured 13:42 vs 13:46 in the same session's own file).
  *
- * The rule is therefore: a marker the current name carries is kept verbatim and only the
- * free text is replaced; a rename tool has no way to know where the work came from, so it
- * never invents one (S4 / NB-11). The text budget applies to the new text, never to the
- * marker. When a marker is preserved, a marker-shaped head on the incoming text is
- * stripped instead of stacked: the human may retype the old name wholesale — the same
- * reason formatName is idempotent — and a name carries at most one marker, always the
- * parent's (S6 / NB-13). Without an inherited marker the text is left untouched: stripping
- * there would delete the human's own words to enforce a rule the session has no marker
- * under in the first place.
+ * The rule is therefore: a head the current name carries is kept WHOLE — both tokens
+ * (S6 / NB-16) — and only the free text is replaced; a rename tool has no way to know
+ * where the work came from, so it never invents a token (S4 / NB-11). The text budget
+ * applies to the new text, never to the head. When a head is preserved, a head-shaped
+ * start on the incoming text is stripped instead of stacked: the human may retype the old
+ * name wholesale — the same reason formatName is idempotent — and a name carries at most
+ * one head, parent first (S6 / NB-13). Without an inherited head the text is left
+ * untouched: stripping there would delete the human's own words to enforce a rule the
+ * session has no head under in the first place.
  */
 export function closeName(currentName: string, state: State, text: string): string {
-  const currentText = parseName(currentName).text.trim();
-  const marker = currentText.match(LINEAGE_MARKER)?.[0] ?? "";
-  const body = marker === "" ? text : text.replace(LINEAGE_MARKER, "");
+  const split = splitLineage(parseName(currentName).text.trim());
+  const hasHead = split.parent !== undefined || split.self !== undefined;
+  const head = formatLineageHead(split.parent, split.self);
+  const body = hasHead ? text.replace(LINEAGE_HEAD, "") : text;
   const clipped = body.trim().slice(0, MAX_TEXT).trim();
-  // With no text to carry, a preserved marker would end in a dangling separator
+  // With no text to carry, a preserved head would end in a dangling separator
   // (`hecho: desde 01a17881 ·`), which reads as a truncated name rather than a short one.
-  // The marker alone still says where the work came from, so only the separator goes.
-  const head = clipped === "" ? marker.replace(/\s*·\s*$/, "") : marker;
-  return formatName(state, `${head}${clipped}`);
+  // The head alone still says where the work came from, so only the separator goes —
+  // never a token.
+  const carried = clipped === "" ? head.replace(/\s*·\s*$/, "") : head;
+  return formatName(state, `${carried}${clipped}`);
 }
 
 /**

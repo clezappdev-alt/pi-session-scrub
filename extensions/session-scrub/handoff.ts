@@ -18,7 +18,13 @@
 /** Tools that CREATE a memory. Reads deliberately do not count. */
 export const MEMORY_WRITE_TOOLS: readonly string[] = ["mem_save", "mem_session_summary"];
 
-import { STATE, formatName, parseName, LINEAGE_MARKER } from "./name.ts";
+import {
+  STATE,
+  formatLineageHead,
+  formatName,
+  parseName,
+  splitLineage,
+} from "./name.ts";
 
 export interface MemoryRef {
   /** From the tool result. Absent until the tool has reported success. */
@@ -102,25 +108,59 @@ export function extractMemoryId(structured: unknown): number | undefined {
 }
 
 /**
- * Remove a leading lineage marker from free text.
+ * Remove the leading lineage head from free text.
  *
  * A handoff writes its id into both names — the origin carries its own, the destination
  * says which one it inherited from — so the pair can be matched in the picker without
- * opening anything. The cost is that the destination's text now starts with a marker, and
+ * opening anything. The cost is that the destination's text now starts with a head, and
  * handing off again would embed the previous one, producing `desde a · desde b · …` that
  * grows without bound.
  *
- * Stripping the leading marker keeps the text at exactly one, so a long chain stays one
- * readable line. Only the leading one is removed: a marker appearing later in the text is
- * part of the human's words.
+ * Stripping the leading head keeps the text at exactly one, so a long chain stays one
+ * readable line. Only the leading one is removed: a token appearing later in the text is
+ * part of the human's words. Since NB-14 the head can carry two tokens
+ * (`desde <parent> · <self> · `), and the whole head goes — leaving the own id behind
+ * would make the carried text repeat a head token (S5).
  *
- * The pattern is shared with `closeName` (name.ts) and accepts a variable width (NB-12):
- * after NB-10 a stored name can carry nine or fifteen hex characters, while the names
- * already on disk carry exactly eight. Raising the ceiling changes nothing for them —
- * the minimum stays at eight, and a hex word without the trailing `·` is still text.
+ * The grammar itself lives in `splitLineage` (name.ts), the one helper that owns it
+ * (NB-15), and accepts a variable width (NB-12): after NB-10 a stored name can carry nine
+ * or fifteen hex characters, while the names already on disk carry exactly eight. Raising
+ * the ceiling changes nothing for them — the minimum stays at eight, and a hex word
+ * without the trailing `·` is still text.
  */
 export function stripLineage(text: string): string {
-  return text.replace(LINEAGE_MARKER, "").trim();
+  const split = splitLineage(text);
+  const hasHead = split.parent !== undefined || split.self !== undefined;
+  return (hasHead ? split.rest : text).trim();
+}
+
+/**
+ * Widen an origin's own token until it differs from the parent token it inherits.
+ *
+ * The parent token is inherited verbatim from the current name, while the origin's own
+ * token comes from the population (NB-10). When the parent session has no file yet — a
+ * handoff run before that session ever spoke — the parent is not in the population, so
+ * both can come out identical and the name reads
+ * `traspaso: desde 01a178c6 · 01a178c6 · …`. Measured in the bench on 2026-10-26: two
+ * tokens the same is worse than a wide one, because it reads as the session pointing at
+ * itself. Widening one hex character at a time is enough to tell them apart, and it is all
+ * that can be done here: the parent's full id is not recoverable from the token it left.
+ */
+export function widenSelfToken(
+  abbrev: string,
+  parent: string | undefined,
+  fullId: string,
+): string {
+  if (parent === undefined) return abbrev;
+  let width = abbrev.length;
+  let token = abbrev;
+  // A uuid's ninth character is the separator dash: a token ending in it is unique but
+  // reads like a typo, so keep breathing until it ends in hex as well.
+  while ((token === parent || token.endsWith("-")) && width < fullId.length) {
+    width += 1;
+    token = fullId.slice(0, width);
+  }
+  return token;
 }
 
 /**
@@ -149,6 +189,12 @@ export function stripLineage(text: string): string {
  *
  * Returns undefined when there is no next step to carry, because a handoff with nothing to
  * hand over is not a handoff.
+ *
+ * The head the origin already carries is re-emitted, not rebuilt from nothing (NB-14):
+ * `desde <parent> ·` survives when the origin inherited one, and `<originAbbrev> ·` is
+ * always added as the session's own token — otherwise the parent would vanish from the
+ * picker the moment a middle session handed off (S2, the same class of defect NB-11
+ * closed for scrub_close). The carried text never contains any part of the head (S5).
  */
 export function planHandoffNames(
   originName: string,
@@ -160,9 +206,12 @@ export function planHandoffNames(
   const candidate = fromArgs.length > 0 ? fromArgs : parsed.text;
   const next = stripLineage(candidate);
   if (next.length === 0) return undefined;
+  // The own token is the caller's abbreviation (NB-10): a wider population recomputes it,
+  // and the fresh width governs over whatever width an earlier handoff stored.
+  const head = formatLineageHead(splitLineage(parsed.text).parent, originAbbrev);
   return {
     next,
-    originName: formatName(STATE.traspaso, `${originAbbrev} · ${next}`),
+    originName: formatName(STATE.traspaso, `${head}${next}`),
     destinationName: formatName(STATE.pausa, `desde ${originAbbrev} · ${next}`),
   };
 }

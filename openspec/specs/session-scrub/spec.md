@@ -875,6 +875,27 @@ A name MUST NOT carry two lineage markers, and the marker MUST name the immediat
 - GIVEN `A`, then `B` created by a handoff from `A`, then `C` created by a handoff from `B`
 - THEN `B` is `pausa: desde A · …`, `C` is `pausa: desde B · …`, and neither mentions a third id.
 
+### NB-14 — A handoff re-emits the head it inherited and adds its own token
+
+`/scrub:handoff` MUST build the origin's name from the lineage head the origin already carries, not from an empty one: the inherited `desde <parent> ·` is re-emitted, and the origin's own abbreviation is always added. The destination stays `pausa: desde <originAbbrev> · <text>`. Without the re-emission the parent disappears from the picker the moment a middle session hands off — the same class of defect NB-11 closed for `scrub_close`.
+
+#### Scenario: a middle session
+- GIVEN `B`, named `pausa: desde 01a177dc · …`, which hands off to `C`
+- THEN `B` becomes `traspaso: desde 01a177dc · 01a17881 · …` and `C` becomes `pausa: desde 01a17881 · …`.
+
+### NB-15 — One helper owns the head grammar
+
+A name's lineage head is `[desde <parent> · ][<self> · ]` at position 0: at most two tokens, parent first, no sigil. `desde` marks a parent; a bare leading hex token is the session's own abbreviation. One helper splits the head and one re-emits it, and `stripLineage` and `closeName` both route through them, so a head can never be stripped by one caller and written back differently by another. Every name already on disk fits this grammar, so nothing is rewritten. A token appearing later in the text is the human's words.
+
+### NB-16 — `scrub_close` preserves the head whole
+
+Extending NB-11: the close preserves **both** tokens of the head, not only the `desde` marker, because dropping the session's own token would leave its child's `pausa: desde <self> · …` pointing at an id no row shows. The close still never invents a token, still refuses to stack a second head, and still applies `MAX_TEXT` to the text alone.
+
+#### Scenario: a middle session closed as `espera`
+- GIVEN `traspaso: desde 01a177dc · 01a17881 · falta el validador`
+- WHEN `scrub_close` writes `espera` with a new next step
+- THEN the name is `espera: desde 01a177dc · 01a17881 · <nuevo texto>`.
+
 ### Slice-4 verified deviations (AS-BUILT, recorded 2026-10-26)
 
 1. **`espera` derives `paused`, not a distinct verdict.** The five states are finer than the five verdicts; only the name carries `espera`.
@@ -888,7 +909,7 @@ A name MUST NOT carry two lineage markers, and the marker MUST name the immediat
 ### Slice-4 manual test scenarios (NS1–NS8, in a live Pi host — Slices 1–3 lists still apply)
 
 1. **NS1 close and read** — `scrub_close` sets `hecho:`/`pausa:` and `/resume` shows it; `scrub_mark` on that session is refused with the pointer.
-2. **NS2 handoff chain** — `/scrub:handoff` twice in a row produces `traspaso: <abbr> · …` and `pausa: desde <abbr> · …` (NB-10: the abbreviation comes from the population, so it can exceed eight characters), and the second message does not carry two lineage markers (NB-13).
+2. **NS2 handoff chain** — `/scrub:handoff` twice in a row produces `traspaso: <abbr> · …` then `traspaso: desde <abbr> · <abbr> · …` (NB-14: a middle session keeps its parent and shows its own token), `pausa: desde <abbr> · …` (NB-10: the abbreviation comes from the population, so it can exceed eight characters), and the second message does not carry two lineage markers (NB-13).
 3. **NS3 memory key** — with a `mem_save` before the handoff, the seeded message names its `topic_key`; with none, the message omits the memory lines instead of inventing one.
 4. **NS4 adopt dry-run** — `/scrub:adopt` lists would-adopt, needs-state, textless, already-adopted and the refused live session, and writes nothing.
 5. **NS5 adopt apply** — `--apply` with one verdict-derived and one inline assignment writes both, backups exist, and each file gained exactly one entry.
