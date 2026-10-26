@@ -4,10 +4,12 @@ Keep your Pi `/resume` list clean and descriptive — without the per-session op
 
 > Human-facing usage guide (Spanish): [`docs/guide.md`](docs/guide.md) — objective, current
 > commands, tools, the project-session workflow, and `/scrub:handoff` in detail.
-> As-built behavior specification, cited to source: [`docs/behavior.md`](docs/behavior.md).
+> As-built behavior specification in three layers — surface, contract, evidence — citing
+> code by symbol: [`docs/behavior.md`](docs/behavior.md).
 > Vocabulary used across the code and the spec, one term per line with its `path:line`:
 > [`docs/glossary.md`](docs/glossary.md) (Spanish, owner-facing).
-> Reflects released behavior as of `v0.3.0`; refreshed at each tag, not per commit.
+> Anchored to the released tag `v0.3.0`; describes `master` as reconciled on 2026-10-26 and
+> is re-reconciled at each tag, not per commit.
 
 ## Why
 
@@ -89,9 +91,8 @@ up to 20 slots ordered WEAK-first with machine-keeps filling the rest.
 `--verbose` prints full fenced `triage` packs for every slot (head = first
 user message ≤300 chars; tail = last messages in chronological order
 ≤300 chars, front-truncated so the most recent text survives). Deferred
-candidates are listed by shortId (`+N deferred: <ids> — triage these
-first, then re-run`). Empty and ephemeral-flow sessions are skipped with
-counts.
+candidates are listed by shortId on one line, `deferred (<N>): <ids>`.
+Empty and ephemeral-flow sessions are skipped with counts.
 
 Each pack carries a grade, never a decision:
 
@@ -108,9 +109,12 @@ dated rationale (`machine keep, bulk-confirmed <YYYY-MM-DD>`) in every
 file. Reasonless `id:keep` is accepted only for machine-keeps (resolved
 provenance); `finished`/`paused`/judged verdicts still require a reason.
 Renames are own-line assignments (`<idPrefix>:name:"<slug>"`, trim +
-non-empty, duplicates allowed like `/name`) with per-item confirms showing
-existing → proposed, written via the same append-only entry `/name` uses
-so `/resume` reflects them with zero friction. Every write re-checks for
+non-empty). The same slug may name several sessions — `/name` allows
+duplicates of the visible name — while repeating an **id prefix** anywhere
+in one command, verdict or rename, is rejected as `duplicate assignment`.
+Each rename gets a per-item confirm showing existing → proposed, written via
+the same append-only entry `/name` uses so `/resume` reflects them with zero
+friction. Every write re-checks for
 a concurrent verdict right before appending. `trash` is never appliable
 from triage. Reasons support backslash escapes (`\"` and `\\`) so
 session text can be quoted verbatim. The summary breaks down the outcome
