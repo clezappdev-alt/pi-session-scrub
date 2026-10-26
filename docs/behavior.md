@@ -346,7 +346,11 @@ states. `<abbr>` is the origin's minimal-unique abbreviation over the project's
 sessions plus the live one (`ids.ts:uniqueAbbreviations`, the NB-06 rule reused
 by NB-10), never a fixed slice: measured, two handoffs four seconds apart shared
 their first eight characters, so a fixed slice pointed the child's marker at the
-child itself. A leading lineage marker is stripped (`handoff.ts:stripLineage`) so a
+child itself. When the origin already carries an inherited head it is re-emitted,
+not rebuilt: a middle session becomes `traspaso: desde <parent> · <abbr> · <next>`
+(NB-14), so it keeps the link upward while becoming the anchor its own child will
+reference — without the re-emission, the parent vanished from the picker the
+moment the middle session handed off. A leading lineage marker is stripped (`handoff.ts:stripLineage`) so a
 chain stays one line. The destination is seeded with one `session-scrub/handoff`
 custom message (`display: false`) built by `handoff.ts:buildHandoffMessage`,
 carrying pointers only: origin short id, origin name, next step, and — when the
@@ -378,12 +382,13 @@ and writes the name with the same call `/name` makes (`pi.setSessionName`), so
 memory and disk update together. Failure reports
 `Could not set the session name: <message>`. Success reports
 `Session name set: <name>`. The name is composed by `name.ts:closeName`, which
-keeps a lineage marker the current name already carries and replaces only the
-free text — the marker is the only thing in the picker that says where the work
-came from, and rewriting the whole text erased it (NB-11, measured on the session
-that reported it). A rename never invents a marker, a marker-shaped head on the
-incoming text is stripped instead of stacked so a name never carries two (NB-13),
-and the `MAX_TEXT` budget applies to the text, never to the marker. The tool description carries the `traspaso` obligation
+keeps the lineage head the current name already carries — **whole**, both tokens
+(`desde <parent> · <self> ·`, NB-16) — and replaces only the free text; the head is
+the only thing in the picker that says where the work came from and where it
+continues, and rewriting the whole text erased it (NB-11, measured on the session
+that reported it). A rename never invents a token, a head-shaped start on the
+incoming text is stripped instead of stacked so a name never carries two heads
+(NB-13), and the `MAX_TEXT` budget applies to the text, never to the head. The tool description carries the `traspaso` obligation
 (tell the user to run `/scrub:handoff`) and the guidance that the closing memory's
 title states the block's state. Annotations: `readOnlyHint: false`,
 `destructiveHint: true`, `idempotentHint: true`, `openWorldHint: false`.
