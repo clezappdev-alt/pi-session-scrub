@@ -4,10 +4,12 @@ Keep your Pi `/resume` list clean and descriptive — without the per-session op
 
 > Human-facing usage guide (Spanish): [`docs/guide.md`](docs/guide.md) — objective, current
 > commands, tools, the project-session workflow, and `/scrub:handoff` in detail.
-> As-built behavior specification, cited to source: [`docs/behavior.md`](docs/behavior.md).
+> As-built behavior specification in three layers — surface, contract, evidence — citing
+> code by symbol: [`docs/behavior.md`](docs/behavior.md).
 > Vocabulary used across the code and the spec, one term per line with its `path:line`:
 > [`docs/glossary.md`](docs/glossary.md) (Spanish, owner-facing).
-> Reflects released behavior as of `v0.3.0`; refreshed at each tag, not per commit.
+> Anchored to the released tag `v0.3.0`; describes `master` as reconciled on 2026-10-26 and
+> is re-reconciled at each tag, not per commit.
 
 ## Why
 
