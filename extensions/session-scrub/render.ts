@@ -34,6 +34,9 @@ const PREVIEW_MAX = 60;
  */
 const RESULT_MAX = 120;
 
+/** Painted before a successful result body. Two cells wide, measured, never assumed. */
+const RESULT_PREFIX = "✓ ";
+
 /** Compact-row head budget: 120 raw characters plus the ellipsis when something was cut. */
 const COMPACT_HEAD_MAX = 120;
 
@@ -117,15 +120,20 @@ export function renderToolResultLine(
   // details at all, and a green check on a refusal is a lie.
   const ok = result.details?.ok !== false && result.isError !== true;
   const raw = collapseWhitespace(first.text);
-  const prefix = ok ? theme.fg("success", "✓ ") : "";
-  const prefixWidth = ok ? 2 : 0;
+  const prefix = ok ? theme.fg("success", RESULT_PREFIX) : "";
+  const prefixWidth = ok ? RESULT_PREFIX.length : 0;
   return {
     // The host tells us how wide the frame is, and aborts the whole TUI on a component
     // that returns a wider line than that (measured 283 > 140 on 2026-10-26). Cutting the
     // RAW text here keeps the visible width inside the frame at every terminal size, and
     // painting afterwards means an escape sequence is never split.
     render: (width: number) => {
-      const budget = Math.max(1, Math.min(RESULT_MAX, width - prefixWidth));
+      // The prefix alone does not fit: a body beside it would overflow the frame, so the
+      // honest answer is nothing rather than a line wider than the terminal.
+      if (width <= prefixWidth) {
+        return [""];
+      }
+      const budget = Math.min(RESULT_MAX, width - prefixWidth);
       const body = raw.length > budget ? raw.slice(0, Math.max(0, budget - 1)) + "…" : raw;
       return [prefix + theme.fg(ok ? "muted" : "warning", body)];
     },

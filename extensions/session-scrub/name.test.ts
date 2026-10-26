@@ -428,7 +428,11 @@ test("the close states are every state whose meaning is a fact about this sessio
 });
 
 test("no close state can assert a continuation in another session", () => {
-  assert.equal(CLOSE_STATES.includes(STATE.traspaso as never), false);
+  // Widened to readonly string[] so the check needs no cast: including a state the tool must
+  // not write is exactly what this asserts, and `as never` would hide a narrowing regression
+  // instead of reporting it (report-only finding R2-4 from the review of this candidate).
+  const closeStates: readonly string[] = CLOSE_STATES;
+  assert.equal(closeStates.includes(STATE.traspaso), false);
 });
 
 test("every close state round-trips through the convention", () => {

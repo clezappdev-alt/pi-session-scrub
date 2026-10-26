@@ -293,3 +293,15 @@ test("a host-flagged error result takes the warning tone even without details", 
   ).render(80);
   assert.deepEqual(line, ["<warning>invalid arguments</warning>"]);
 });
+
+test("a frame narrower than the check prefix renders nothing instead of overflowing", () => {
+  // At width 2 there is no room for a body beside "✓ ", and any body would push the line
+  // past the frame — the same abort this budget exists to prevent. Report-only finding
+  // R4-001 from the review of the handoff-promise candidate.
+  const line = renderToolResultLine(
+    { content: [{ type: "text", text: "anything" }], details: { ok: true } },
+    { expanded: false },
+    theme,
+  ).render(2);
+  assert.deepEqual(line, [""]);
+});
