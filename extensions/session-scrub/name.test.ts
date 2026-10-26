@@ -287,3 +287,10 @@ test("closing a session that already carries a marker never produces two (NB-13)
   assert.equal(closed, "pausa: desde 01a177dc · falta el spec");
   assert.equal((closed.match(/desde/g) ?? []).length, 1);
 });
+test("closing with no text keeps the marker without a dangling separator", () => {
+  // A state-only close is legitimate (`hecho:`), and so is keeping the lineage. What is
+  // not legitimate is a marker that ends in ` ·`, which reads as a truncated name.
+  assert.equal(closeName("pausa: desde 01a177dc · algo", STATE.hecho, ""), "hecho: desde 01a177dc");
+  assert.equal(closeName("pausa: desde 01a177dc · algo", STATE.hecho, "   "), "hecho: desde 01a177dc");
+  assert.equal(closeName("pausa: algo", STATE.hecho, ""), "hecho:");
+});

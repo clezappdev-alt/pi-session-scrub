@@ -123,7 +123,12 @@ export function closeName(currentName: string, state: State, text: string): stri
   const currentText = parseName(currentName).text.trim();
   const marker = currentText.match(LINEAGE_MARKER)?.[0] ?? "";
   const body = marker === "" ? text : text.replace(LINEAGE_MARKER, "");
-  return formatName(state, `${marker}${body.trim().slice(0, MAX_TEXT).trim()}`);
+  const clipped = body.trim().slice(0, MAX_TEXT).trim();
+  // With no text to carry, a preserved marker would end in a dangling separator
+  // (`hecho: desde 01a17881 ·`), which reads as a truncated name rather than a short one.
+  // The marker alone still says where the work came from, so only the separator goes.
+  const head = clipped === "" ? marker.replace(/\s*·\s*$/, "") : marker;
+  return formatName(state, `${head}${clipped}`);
 }
 
 /**
