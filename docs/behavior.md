@@ -1,7 +1,7 @@
 # session-scrub — behavior specification (as-built)
 
 **Status:** as-built documentation, derived from source; requirements are cited by ID from the canonical spec and never restated here.
-**Reflects:** anchored to the released tag `v0.4.1`; Layers A–B describe `master` at `f41b9d4` (2026-10-26), which is what that tag releases — everything `v0.4.0` carried, plus the lineage marker fixed (NB-10..NB-13: derived from the population, preserved by `scrub_close`, stripped at any width, one per name and the parent's). Nothing described below is unreleased. The anchor is checked against `git describe --tags` by `doccheck.test.ts` and the whole document is re-reconciled at each new tag, not per commit.
+**Reflects:** anchored to the released tag `v0.4.2`; Layers A–B describe `master` at `f2bb04d` (2026-10-26), which is what that tag releases — everything `v0.4.1` carried, plus the two-token lineage head (NB-14..NB-16: a middle session re-emits the parent it inherited and shows its own token, one helper owns the grammar, and a close preserves the whole head). Nothing described below is unreleased. The anchor is checked against `git describe --tags` by `doccheck.test.ts` and the whole document is re-reconciled at each new tag, not per commit.
 
 ## How to read this document
 
