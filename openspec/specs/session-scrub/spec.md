@@ -848,6 +848,8 @@ For any non-live session whose file was modified within 120 seconds the system M
 - WHEN `/scrub:handoff` plans the pair of names
 - THEN the marker is longer than eight characters, and unique among the sessions that exist.
 
+A third option exists and was **declined** on 2026-10-26: because the relation is upward-only, the origin could drop its own id from the name entirely, which would let the child's marker be computed inside `newSession`'s `setup` with both ids in hand and close this residual outright. It was declined because the pair is then no longer matchable by reading text in the picker.
+
 #### Scenario: the residual is bounded and stated
 - GIVEN a session created *after* the name was written, sharing the origin's abbreviation
 - THEN the marker may no longer be resolvable, because a name is static text; the guarantee is uniqueness against the population at write time, never against the future.
