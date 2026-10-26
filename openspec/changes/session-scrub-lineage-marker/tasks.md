@@ -40,4 +40,4 @@ The requirement delta is `spec.md` in this directory (S1–S7). This file is the
 - Gates on the tip, re-run by the parent: **225/225 tests, typecheck exit 0**.
 - Delivered as **PR #15** before any further commit (slice boundary recorded in
   `odd/tasks/lineage-marker.md` L7: 409 authored lines).
-- `os` — the dangling-separator fix that followed delivery (`closeName` with no text).
+- `b44b06f` — the dangling-separator fix that followed delivery (`closeName` with no text).
