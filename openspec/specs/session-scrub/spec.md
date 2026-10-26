@@ -251,6 +251,13 @@ The system MUST propose `ephemeral` candidates ONLY when `matchesEphemeralFlow` 
 **Verification note:** verdict-path ephemeral was exercised live (T2d PASS); the live skill-log scan path (regex vs real `/skill:` log line) is code-reviewed + `tsc` clean but not yet exercised against a real skill run — one follow-up trial with a real skill invocation is recommended, non-blocking.
 
 ### REQ-03 — POLICY grammar and conservative default
+
+> **MODIFIED (change `session-scrub-policy-block`, 2026-10-26):** the machine key set is
+> `ephemeral-flows:` **only**. `verdicts:` and `mark-on:` are guidance for the agent and are
+> parsed by nothing; no marking engine exists and none is planned. The block is also a
+> **region** now — keys read only between the first start marker and the first end after it
+> (PB-01) — and fence-aware, so a quoted template is text and not policy (PB-02). See
+> `openspec/changes/session-scrub-policy-block/spec.md`.
 The system MUST parse the POLICY block per F4 (`#`/blank ignored; `verdicts:`/`mark-on:`/`ephemeral-flows:` keys; `<...>` placeholders = empty; absent/unparseable = conservative default with empty ephemeral-flows and no agent marking).
 
 #### Scenario: absent block disables ephemeral matching
@@ -306,6 +313,11 @@ The system MUST implement `/scrub-restore` listing `getTrashDir()` contents, res
 - THEN the file exists in the sessions dir again and a subsequent `/scrub` lists it with verdict preserved.
 
 ### REQ-08 — `/scrub-init` writes the generic POLICY template once
+
+> **MODIFIED (change `session-scrub-policy-block`, 2026-10-26):** `/scrub:init` gains
+> `--dry-run` and non-interactive dry-run, previews the exact text it would append, confirms
+> in the TUI, refuses by naming the existing block's line, and notifies a write failure
+> instead of rejecting outward (PB-03, PB-04).
 The system MUST implement `/scrub-init` creating/updating project-local AGENTS.md idempotently with the delimited generic commented template (taxonomy + when-to-mark guidance + `verdicts:`/`mark-on:`/`ephemeral-flows:` keys with placeholders), never duplicating an existing block.
 
 #### Scenario: second init is a no-op
