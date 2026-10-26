@@ -37,7 +37,7 @@ import {
   countConversationTurns,
   samePath,
 } from "./classify.ts";
-import { STATE, formatName, parseName, closeName, resolveVerdict, splitLineage, type State } from "./name.ts";
+import { STATE, CLOSE_STATES, formatName, parseName, closeName, resolveVerdict, splitLineage, type State } from "./name.ts";
 import {
   verifyAdoption,
   freshnessWarning,
@@ -604,13 +604,7 @@ async function handleScrubMark(
 }
 
 const ScrubCloseParams = Type.Object({
-  state: Type.Union([
-    Type.Literal(STATE.pausa),
-    Type.Literal(STATE.abierto),
-    Type.Literal(STATE.espera),
-    Type.Literal(STATE.traspaso),
-    Type.Literal(STATE.hecho),
-  ]),
+  state: Type.Union(CLOSE_STATES.map((s) => Type.Literal(s))),
   text: Type.String(),
 });
 
@@ -651,7 +645,6 @@ const HANDOFF_CUSTOM_TYPE = "session-scrub/handoff";
  * so a human should type it rather than have it fire mid-turn.
  */
 async function handleScrubHandoff(
-  pi: ExtensionAPI,
   args: string,
   ctx: ExtensionCommandContext,
 ): Promise<void> {
@@ -684,10 +677,12 @@ async function handleScrubHandoff(
     return;
   }
 
-  // Mark the origin as handed off while it is still the current session, so the picker
-  // shows the two halves of the pair rather than two identical rows. pi.setSessionName is
-  // on ExtensionAPI, not on ctx — hence the closure.
-  pi.setSessionName(plan.originName);
+  // The origin's promise is written by path after the destination exists (NB-04, change
+  // session-scrub-handoff-promise): capture the origin's file and the backup dir while
+  // this is still the live session, because after `ctx.newSession` the live path is the
+  // new one and `appendNameToOther` refuses the live path.
+  const originFile = ctx.sessionManager.getSessionFile();
+  const backupDir = getBackupDir(ctx.sessionManager.getSessionDir());
 
   // Read from the session's own entries rather than from process state: a /reload
   // re-imports this module, so anything held in a variable would be gone by the time the
@@ -722,11 +717,33 @@ async function handleScrubHandoff(
       sessionManager.appendSessionInfo(plan.destinationName);
     },
     withSession: async (fresh) => {
+      // The promise is the last write (NB-04): only now that the continuation exists
+      // does the origin become `traspaso:`. Written by path, through the NB-08 stack,
+      // with the fresh session as the live path to refuse. A failure here is reported
+      // honestly and never fails the switch.
+      let originNote = "";
+      let originFailed = false;
+      if (originFile === undefined) {
+        originFailed = true;
+        originNote = "; the origin has no session file, so it was left as it was";
+      } else {
+        try {
+          await appendNameToOther(
+            originFile,
+            plan.originName,
+            fresh.sessionManager.getSessionFile(),
+            backupDir,
+          );
+        } catch (err) {
+          originFailed = true;
+          originNote = `; the origin could not be renamed (${errorMessage(err)}) — set it by hand in that session`;
+        }
+      }
       fresh.ui.notify(
-        memory?.topicKey !== undefined
+        (memory?.topicKey !== undefined
           ? `Handoff: ${plan.destinationName} — context in memory ${memory.topicKey}`
-          : `Handoff: ${plan.destinationName} — no prior memory in this session`,
-        "info",
+          : `Handoff: ${plan.destinationName} — no prior memory in this session`) + originNote,
+        originFailed ? "warning" : "info",
       );
     },
   });
@@ -1997,9 +2014,9 @@ export default function (pi: ExtensionAPI): void {
   });
   pi.registerCommand("scrub:handoff", {
     description:
-      "Create the continuation this session promised: a new session, named and seeded with this session, the next step, and the key of the last memory written here. Use after naming this session with a 'traspaso:' state.",
+      "Create the continuation this session promised: a new session, named and seeded with this session, the next step, and the key of the last memory written here. Use after naming this session with the pending step — `pausa:` is the honest state while the handoff is pending — because this command is what writes the 'traspaso:' and only once the new session exists.",
     handler: async (args, ctx) => {
-      await handleScrubHandoff(pi, args, ctx);
+      await handleScrubHandoff(args, ctx);
     },
   });
   pi.registerTool<typeof ScrubCloseParams, { ok: boolean }>({
@@ -2008,12 +2025,10 @@ export default function (pi: ExtensionAPI): void {
     description:
       "Name this session so /resume says where the work continues. " +
       "state: pausa (here, next step known), abierto (here, unknown), " +
-      "espera (blocked elsewhere), traspaso (continues in another session), " +
-      "hecho (finished). " +
-      "traspaso commits you to more than a name: tell the user to run /scrub:handoff, " +
-      "because that command is what actually creates the continuation and only they can " +
-      "run it. A traspaso with no handoff leaves /resume promising a continuation that " +
-      "never existed, which is worse than no name because it is trusted. " +
+      "espera (blocked elsewhere), hecho (finished). " +
+      "The fifth state, traspaso (continues in another session), is written only by " +
+      "/scrub:handoff, and only once the continuation exists — so while a handoff is " +
+      "pending, name the block pausa: <next step> and tell the user to run /scrub:handoff. " +
       "text is read by a human scanning /resume, so: the NEXT step in plain words, " +
       "not what you implemented, not symbol names, not an API call. One glanceable line. " +
       "The picker truncates a row around 77 characters and a lineage head inherited from " +
@@ -2021,8 +2036,9 @@ export default function (pi: ExtensionAPI): void {
       "has handed off), so keep the text well under 60: the end is what gets cut, and the " +
       "end is the instruction. A head this session already carries is preserved whole — " +
       "write only the next step, never repeat a token. " +
-      "If a state word would contradict the text — a 'pausa:' whose text says the work " +
-      "moves elsewhere — pick the state that matches, because they are mutually exclusive. " +
+      "If a state word would contradict the text, pick the state that matches, because they " +
+      "are mutually exclusive — and when the text says the work moves elsewhere, the state " +
+      "is still pausa: until /scrub:handoff runs. " +
       "The closing memory's title should state the BLOCK's state — what is built, what is " +
       "verified, what is next — not the finding that prompted it. That title travels " +
       "verbatim in the handoff, and measured across three runs it is the difference " +

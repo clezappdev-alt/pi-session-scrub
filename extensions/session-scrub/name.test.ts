@@ -21,6 +21,7 @@ import {
   closeName,
   splitLineage,
   formatLineageHead,
+  CLOSE_STATES,
 } from "./name.ts";
 
 const ALL_STATES = [
@@ -412,6 +413,30 @@ test("the close budget still applies to the text, never to the two-token head", 
     closed.length <= head.length + 60,
     `text must be budgeted, got ${closed.length} chars: ${closed}`,
   );
+});
+
+// ---------------------------------------------------------------------------
+// CLOSE_STATES — the states the plugin may write on its own initiative (NB-03)
+// ---------------------------------------------------------------------------
+
+test("the close states are every state whose meaning is a fact about this session", () => {
+  // The partition, restated as a set: a close reports where the work is with respect to
+  // THIS session. `traspaso` is the one state that asserts something about another
+  // session, and only /scrub:handoff can know it, because only the handoff creates it.
+  const factual = ALL_STATES.filter((s) => s !== STATE.traspaso);
+  assert.deepEqual([...CLOSE_STATES].sort(), [...factual].sort());
+});
+
+test("no close state can assert a continuation in another session", () => {
+  assert.equal(CLOSE_STATES.includes(STATE.traspaso as never), false);
+});
+
+test("every close state round-trips through the convention", () => {
+  // A state the schema accepts but the parser cannot read back would be written into
+  // /resume as free text, which is the one thing a state prefix exists to prevent.
+  for (const state of CLOSE_STATES) {
+    assert.equal(parseName(formatName(state, "próximo paso")).state, state);
+  }
 });
 
 test("closing with no text keeps the marker without a dangling separator", () => {
