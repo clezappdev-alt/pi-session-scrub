@@ -8,12 +8,13 @@ stack:
   language: typescript-strict
   runtime: pi-extension-via-jiti
   entry: extensions/session-scrub/index.ts
-  pi_version: 0.85.1
+  pi_version: 1.2.0
   build_step: none
   core_libs: peerDependencies-star
 
 testing:
-  runner: none-automated-yet
+  runner: 'node --test "extensions/session-scrub/*.test.ts"'
+  typecheck_gate: ./scripts/typecheck.sh
   manual_trial: "pi -e ./extensions/session-scrub/index.ts + /reload"
   install_gate: tagged-versions-only
   conventions:
