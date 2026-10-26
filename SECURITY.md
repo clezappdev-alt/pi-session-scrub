@@ -66,22 +66,20 @@ grep -rnE -e 'node:net' -e 'node:http' -e 'node:dns' -e 'node:tls' \
 
 - Every path component taken from session data passes through `basename()`
   before `join()`: a name is data, never a path.
+- **No write follows a symlink.** `refuseNonRegularFile` runs `lstat` before the
+  backup copy and before the `/scrub:init` append to `AGENTS.md`, and refuses
+  anything that exists and is not a regular file. `lstat` is deliberate: `stat`
+  would resolve the link and answer about the target.
 - A restore refuses to overwrite an existing target; it reports the collision and
-  moves nothing.
+  moves nothing. A test asserts the refusal and that both files keep their bytes.
 - Destructive writes follow one order: parse, back up, write, verify. A write
   that cannot be verified is reported with the backup path, never counted as
   applied.
 - The trash and backup roots are siblings of Pi's `sessions/` directory, never
   inside it, so Pi can never mistake a plugin file for a live session.
 
-## Known gap
-
-Symlink refusal is **not** implemented yet. `copyFileSync` (the backup) and
-`writeFileSync` (the `/scrub:init` block) follow a symlink, so a symlinked
-session file or a symlinked project `AGENTS.md` is read and written through
-instead of being refused with `lstat`. This is tracked in the issue list; until
-it is fixed, do not run `/scrub:init` in a project whose `AGENTS.md` you did not
-create yourself.
+Each guard above has a test in `extensions/session-scrub/*.test.ts`; a security
+guard without a test is a comment.
 
 ## Out of scope for this repository
 

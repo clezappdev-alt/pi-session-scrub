@@ -9,7 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, utimesSync, symlinkSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -20,6 +20,10 @@ import {
   backupSessionFile,
   snapshotFile,
   freshnessOf,
+  refuseNonRegularFile,
+  appendPolicyBlock,
+  moveToTrash,
+  moveFromTrash,
 } from "./sessionfs.ts";
 
 const HEADER = '{"type":"session","version":3,"id":"s1","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/tmp"}';
@@ -182,5 +186,123 @@ test("a missing file reads as settled, not fresh", () => {
     const { fresh, ageSeconds } = freshnessOf(join(r.sessionDir, "gone.jsonl"));
     assert.equal(fresh, false);
     assert.equal(ageSeconds, Number.MAX_SAFE_INTEGER);
+  } finally { r.cleanup(); }
+});
+
+// ---------------------------------------------------------------------------
+// §9.6 — never write through a symlink
+//
+// `copyFileSync` and `writeFileSync` both follow a symlink. Without an `lstat` first,
+// "back up this file" becomes "copy any readable file into a known place", and a
+// project that ships AGENTS.md as a link turns `/scrub:init` into an append to whatever
+// the link points at. Both guards are asserted here, not assumed.
+// ---------------------------------------------------------------------------
+
+const POLICY_BLOCK = "<!-- pi-session-scrub:start -->\nephemeral-flows: x\n<!-- pi-session-scrub:end -->\n";
+
+test("refuseNonRegularFile passes a regular file and a missing path", () => {
+  // Missing must pass: the caller decides. `/scrub:init` creates AGENTS.md when it is
+  // absent, and refusing an absent file would break the command's normal path.
+  const r = runtime();
+  try {
+    const regular = join(r.sessionDir, "a.jsonl");
+    writeFileSync(regular, HEADER + "\n");
+    refuseNonRegularFile(regular, "the session file");
+    refuseNonRegularFile(join(r.sessionDir, "gone.jsonl"), "the session file");
+  } finally { r.cleanup(); }
+});
+
+test("refuseNonRegularFile refuses a symlink and a directory", () => {
+  const r = runtime();
+  try {
+    const real = join(r.sessionDir, "real.jsonl");
+    writeFileSync(real, HEADER + "\n");
+    const link = join(r.sessionDir, "link.jsonl");
+    symlinkSync(real, link);
+    assert.throws(() => refuseNonRegularFile(link, "the session file"), /not a regular file/);
+    assert.throws(() => refuseNonRegularFile(r.sessionDir, "the session file"), /not a regular file/);
+  } finally { r.cleanup(); }
+});
+
+test("backing up a symlinked session file is refused and writes no backup", () => {
+  const r = runtime();
+  try {
+    const real = join(r.sessionDir, "real.jsonl");
+    writeFileSync(real, HEADER + "\n");
+    const link = join(r.sessionDir, "link.jsonl");
+    symlinkSync(real, link);
+    const backups = getBackupDir(r.sessionDir);
+    assert.throws(() => backupSessionFile(link, backups), /not a regular file/);
+    assert.equal(existsSync(backupPathFor(link, backups)), false, "no backup may be written");
+  } finally { r.cleanup(); }
+});
+
+test("appending the policy block to a symlinked AGENTS.md is refused and the target is untouched", () => {
+  const root = mkdtempSync(join(tmpdir(), "scrub-init-"));
+  try {
+    const outside = join(root, "outside-agents.md");
+    writeFileSync(outside, "original\n");
+    const agentsPath = join(root, "AGENTS.md");
+    symlinkSync(outside, agentsPath);
+    assert.throws(
+      () => appendPolicyBlock(agentsPath, "original\n", POLICY_BLOCK),
+      /not a regular file/,
+    );
+    assert.equal(readFileSync(outside, "utf-8"), "original\n", "the link target must not be written");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("appending the policy block still appends to a regular file and creates a missing one", () => {
+  // The behaviour `/scrub:init` already had, pinned so the guard cannot narrow it.
+  const root = mkdtempSync(join(tmpdir(), "scrub-init-"));
+  try {
+    const existingPath = join(root, "existing", "AGENTS.md");
+    mkdirSync(dirname(existingPath), { recursive: true });
+    writeFileSync(existingPath, "# rules\n");
+    appendPolicyBlock(existingPath, "# rules\n", POLICY_BLOCK);
+    assert.equal(readFileSync(existingPath, "utf-8"), `# rules\n${POLICY_BLOCK}`);
+
+    const freshPath = join(root, "fresh", "AGENTS.md");
+    mkdirSync(dirname(freshPath), { recursive: true });
+    appendPolicyBlock(freshPath, "", POLICY_BLOCK);
+    assert.equal(readFileSync(freshPath, "utf-8"), POLICY_BLOCK);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// ---------------------------------------------------------------------------
+// Moves: trash and restore (REQ-07's overwrite guard)
+// ---------------------------------------------------------------------------
+
+test("a session moved to trash comes back on restore", () => {
+  const r = runtime();
+  try {
+    const session = join(r.sessionDir, "a.jsonl");
+    writeFileSync(session, HEADER + "\n");
+    const trashed = moveToTrash(session, getTrashDir(r.sessionDir));
+    assert.equal(existsSync(session), false);
+    assert.equal(readFileSync(trashed, "utf-8"), HEADER + "\n");
+
+    const restored = moveFromTrash(trashed, r.sessionDir);
+    assert.equal(restored, session);
+    assert.equal(existsSync(trashed), false);
+    assert.equal(readFileSync(restored, "utf-8"), HEADER + "\n");
+  } finally { r.cleanup(); }
+});
+
+test("restoring over an existing target is refused and neither file moves", () => {
+  // REQ-07's guard: implemented before, never tested. A restore that overwrote would
+  // destroy a live session with a copy of an older one.
+  const r = runtime();
+  try {
+    const target = join(r.sessionDir, "a.jsonl");
+    writeFileSync(target, "already here\n");
+    const trashDir = getTrashDir(r.sessionDir);
+    mkdirSync(trashDir, { recursive: true });
+    const trashed = join(trashDir, "a.jsonl");
+    writeFileSync(trashed, "from trash\n");
+
+    assert.throws(() => moveFromTrash(trashed, r.sessionDir), /already exists/);
+    assert.equal(readFileSync(target, "utf-8"), "already here\n", "the live file must survive");
+    assert.equal(readFileSync(trashed, "utf-8"), "from trash\n", "the trash copy must survive");
   } finally { r.cleanup(); }
 });

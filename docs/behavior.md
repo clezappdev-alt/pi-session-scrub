@@ -93,9 +93,14 @@ On `/scrub:triage` and `/scrub:adopt` a bypass-shaped token is refused by name
   `session-scrub-backups`, deliberately a sibling of the trash dir and never a
   directory inside it (a backup inside trash would be offered for restore).
 - The only file the plugin writes outside trash, backups and session files is
-  `<ctx.cwd>/AGENTS.md` (`index.ts:handleScrubInit`).
+  `<ctx.cwd>/AGENTS.md`, through `sessionfs.ts:appendPolicyBlock`
+  (`index.ts:handleScrubInit` plans it).
+- **No write follows a symlink.** `sessionfs.ts:refuseNonRegularFile` runs `lstat`
+  and refuses anything that exists and is not a regular file, on the backup copy and
+  on that `AGENTS.md` append alike. A path that does not exist passes: the caller
+  decides, and `/scrub:init` creates an absent `AGENTS.md`.
 - Every mutation of a session file is a `renameSync` into or out of the trash
-  (`index.ts:moveToTrash`, `index.ts:moveFromTrash`) or an append
+  (`sessionfs.ts:moveToTrash`, `sessionfs.ts:moveFromTrash`) or an append
   (`pi.appendEntry`, `SessionManager.appendCustomEntry`,
   `SessionManager.appendSessionInfo` via `index.ts:appendNameToOther` and
   `index.ts:appendVerdictToOther`, both inside `withFileMutationQueue`).
@@ -195,7 +200,7 @@ nothing actionable → `"<summary> Nothing to trash."` → dry-run or non-TUI
 (`index.ts:isInteractive`: TUI with UI only, REQ-11) → `"<summary> Dry-run — nothing moved."`
 plus one line per actionable item → otherwise per item a `ctx.ui.confirm`
 (`"Trash session <shortId>?"`, body from `render.ts:formatTrashConfirmBody`, which
-always ends with `Move is reversible via /scrub:restore.`) → `index.ts:moveToTrash`
+always ends with `Move is reversible via /scrub:restore.`) → `sessionfs.ts:moveToTrash`
 (mkdir trash chain, `renameSync`; trash-name collisions overwrite silently — there
 is no `existsSync` guard outbound) → re-list and report
 `Trashed <n> session(s). Remaining: <r>.` (`render.ts:formatTrashResult`).
@@ -214,8 +219,9 @@ ignored (there is no preflight for this command; the non-TUI guard is a direct
 `"No trashed sessions for this project."`). Non-TUI →
 `"Dry-run — nothing restored:\n<basenames>"`. TUI → per file a confirm
 (`"Restore session <id8>?"`, id from `ids.ts:idFromFilename`, width from
-`ids.ts:uniqueAbbreviations`) → `index.ts:moveFromTrash` (mkdir sessions dir,
-refuses to overwrite: `restore target already exists: <path>`, then `renameSync`)
+`ids.ts:uniqueAbbreviations`) → `sessionfs.ts:moveFromTrash` (mkdir sessions dir,
+refuses to overwrite: `restore target already exists: <path>`, then `renameSync`; the
+refusal is pinned by a test, and it leaves both files untouched)
 → `Restored <n> session(s).` (`render.ts:formatRestoreResult`).
 
 Verdicts are not cleared: restoring only renames the file back, entries included,
@@ -234,7 +240,10 @@ like every other write path (REQ-11), notifies `Dry-run — nothing written. Wou
 append to AGENTS.md:` followed by that text; the TUI confirms
 `"Write the session-scrub policy block to AGENTS.md?"` with the same text.
 A failed write notifies `Could not write AGENTS.md: <message>` and mutates
-nothing — the command never rejects outward (PB-04). On success it reports
+nothing — the command never rejects outward (PB-04). That includes the §9.6 refusal:
+when `AGENTS.md` is a symlink or a directory, the message reads
+`Could not write AGENTS.md: refusing to write through AGENTS.md: not a regular file (<path>)`
+and the link target is byte-for-byte unchanged. On success it reports
 `Policy block written to AGENTS.md. Fill ephemeral-flows for this project.` The
 template's placeholder `ephemeral-flows: <flow-name-1>, <flow-name-2>` parses as
 empty, so a freshly written block is inert until a human fills it (REQ-03).
@@ -483,7 +492,7 @@ layer with `path:line` citations, and only inside dated evidence blocks.
   report; visible in `index.ts:isInteractive`.
 - **`moveToTrash` can silently overwrite on a trash-name collision** —
   `renameSync` with no `existsSync` guard outbound, while restore guards inbound
-  (`index.ts:moveFromTrash`). Recorded 2026-10-08 with the v0.3.0 snapshot; never
+  (`sessionfs.ts:moveFromTrash`). Recorded 2026-10-08 with the v0.3.0 snapshot; never
   changed.
 - **`/scrub:restore` parses no flag, so `--dry-run` in the TUI is a no-op** —
   an as-built asymmetry with `/scrub:apply`, recorded 2026-10-08; neither the spec
@@ -558,7 +567,7 @@ one fresh and one settled (`touch -d '10 minutes ago'`), then
   the sessions dir, present under `session-scrub-trash/` with `sha256` identical
   to the original and its original mtime preserved (`rename`, not copy-and-rewrite);
   restore returned it `cmp`-identical; `/scrub:apply` created no backup, which is
-  correct for a move (`index.ts:moveToTrash`).
+  correct for a move (`sessionfs.ts:moveToTrash`).
 
 Restoration proof: after cleanup, `diff -r` between the bench sessions dir and the
 rollback copy was empty — same 9 files, same bytes, same mtimes; `/tmp` scratch
