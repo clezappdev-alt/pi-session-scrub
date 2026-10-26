@@ -4,7 +4,7 @@ Qué es este plugin, qué comandos tiene, qué tools expone, cómo se trabaja co
 sesión de proyecto y —en detalle— qué hace `/scrub:handoff` y por qué conviene usarlo.
 
 > Esta guía describe el código en **HEAD**. La especificación as-built está en
-> [`behavior.md`](behavior.md), anclada a la última release (`v0.4.0`), que es la que ya
+> [`behavior.md`](behavior.md), anclada a la última release (`v0.4.1`), que es la que ya
 > incluye la convención de nombres, `/scrub:handoff` y `/scrub:adopt`.
 > El vocabulario compartido (estado, veredicto, machine keep, fila compacta) está en
 > [`glossary.md`](glossary.md).
