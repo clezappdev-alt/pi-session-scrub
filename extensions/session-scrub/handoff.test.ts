@@ -263,6 +263,59 @@ test("the marker forms match what planHandoffNames writes", () => {
 // planHandoffNames — the two names of a handoff
 // ---------------------------------------------------------------------------
 
+test("a middle session re-emits the inherited parent and adds its own abbreviation (NB-14)", () => {
+  // S2: the origin's `desde <parent>` must survive the rename, or the parent vanishes
+  // from the picker the moment the middle session hands off.
+  const plan = planHandoffNames("pausa: desde 01a177dc · falta el spec", "", "01a17881");
+  assert.ok(plan);
+  assert.equal(plan.originName, "traspaso: desde 01a177dc · 01a17881 · falta el spec");
+  assert.equal(plan.destinationName, "pausa: desde 01a17881 · falta el spec");
+});
+
+test("the text carried forward never contains any part of the head (S5)", () => {
+  const plan = planHandoffNames("pausa: desde 01a177dc · falta el spec", "", "01a17881");
+  assert.equal(plan?.next, "falta el spec");
+});
+
+test("stripping a two-token head removes both tokens, not just the marker", () => {
+  assert.equal(stripLineage("desde 01a177dc · 01a17881 · falta el spec"), "falta el spec");
+});
+
+test("a first-generation origin stays byte-identical to the one-token form (S4)", () => {
+  // Names this change starts writing for a first handoff must match what v0.4.1 wrote:
+  // `traspaso: <self> · <next>` and `pausa: desde <self> · <next>`.
+  const plan = planHandoffNames("pausa: falta el spec", "", "01a11719");
+  assert.equal(plan?.originName, "traspaso: 01a11719 · falta el spec");
+  assert.equal(plan?.destinationName, "pausa: desde 01a11719 · falta el spec");
+});
+
+test("the chain A→B→C keeps two tokens per name and no grandparent (S3)", () => {
+  const ids = [
+    "01a11719-aaaa-7bbb-8ccc-ddddeeeeffff",
+    "01a11c59-bbbb-7bbb-8ccc-ddddeeeeffff",
+    "01a11f00-cccc-7bbb-8ccc-ddddeeeeffff",
+  ];
+  const [a, b, c] = ids.map((id) => abbrevOf(uniqueAbbreviations(ids), id));
+  // A hands off to B: A shows its own id, B inherits it.
+  const first = planHandoffNames("pausa: siguiente paso", "", a);
+  assert.equal(first?.originName, `traspaso: ${a} · siguiente paso`);
+  assert.equal(first?.destinationName, `pausa: desde ${a} · siguiente paso`);
+  // B hands off to C: B keeps `desde ${a}` and now also shows ${b}; C says only ${b}.
+  const second = planHandoffNames(first!.destinationName, "", b);
+  assert.equal(second?.originName, `traspaso: desde ${a} · ${b} · siguiente paso`);
+  assert.equal(second?.destinationName, `pausa: desde ${b} · siguiente paso`);
+  assert.ok(!second!.destinationName.includes(a), "C must not carry a grandparent");
+  // Neither the name nor the carried text repeats a head token.
+  assert.equal(second!.next, "siguiente paso");
+  assert.ok(!second!.next.includes(a) && !second!.next.includes(b), "the next step is the text");
+  assert.equal(
+    (second!.originName.match(new RegExp(`\\b${b}\\b`, "g")) ?? []).length,
+    1,
+    "B's own token appears exactly once",
+  );
+  assert.ok(!first!.destinationName.includes(c));
+});
+
 test("the origin is marked as handed off and the destination as received", () => {
   const plan = planHandoffNames("traspaso: falta probar el traspaso", "", "01a11719");
   assert.ok(plan);
@@ -317,16 +370,18 @@ test("a handoff from a pausa session still marks the origin as handed off", () =
   assert.equal(plan?.destinationName, "pausa: desde 01a11719 · falta el spec");
 });
 
-test("a chain does not accumulate ancestry", () => {
-  // Handing off from a session that already carries a marker must produce exactly one.
+test("a chain does not accumulate ancestry beyond one parent plus self (S3)", () => {
+  // Handing off from a session that already carries a head must produce exactly one head
+  // — two tokens, parent first — not a wall of `desde` clauses, and not the old loss that
+  // dropped the inherited parent (S2: A vanished from the picker when B handed off).
   const first = planHandoffNames("traspaso: falta probar", "", "01a11719");
   const second = planHandoffNames(first!.destinationName, "", "01a11c59");
   assert.equal(
     second!.originName,
-    "traspaso: 01a11c59 · falta probar",
-    "the previous marker must not be re-embedded",
+    "traspaso: desde 01a11719 · 01a11c59 · falta probar",
+    "the inherited parent is re-emitted, and exactly once",
   );
-  assert.equal(second!.destinationName, "pausa: desde 01a11c59 · falta probar");
+  assert.equal((second!.originName.match(/desde/g) ?? []).length, 1);
 });
 
 test("a three-session chain carries exactly the parent's marker, never the grandparent's (NB-13)", () => {

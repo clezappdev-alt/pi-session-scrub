@@ -2008,11 +2008,11 @@ export default function (pi: ExtensionAPI): void {
       "never existed, which is worse than no name because it is trusted. " +
       "text is read by a human scanning /resume, so: the NEXT step in plain words, " +
       "not what you implemented, not symbol names, not an API call. One glanceable line. " +
-      "The picker truncates a row around 77 characters, and a lineage marker inherited " +
-      "from a handoff takes about 17 of them, so keep the text well under 60: the end is " +
-      "what gets cut, and the end is the instruction. If this session carries a " +
-      "`desde <id> ·` marker, it is preserved for you — write only the next step, never " +
-      "repeat the marker. " +
+      "The picker truncates a row around 77 characters and a lineage head inherited from " +
+      "a handoff takes 17 to 30 of them (a parent token, plus this session's own once it " +
+      "has handed off), so keep the text well under 60: the end is what gets cut, and the " +
+      "end is the instruction. A head this session already carries is preserved whole — " +
+      "write only the next step, never repeat a token. " +
       "If a state word would contradict the text — a 'pausa:' whose text says the work " +
       "moves elsewhere — pick the state that matches, because they are mutually exclusive. " +
       "The closing memory's title should state the BLOCK's state — what is built, what is " +
