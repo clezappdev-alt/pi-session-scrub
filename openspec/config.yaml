@@ -25,12 +25,20 @@ sdd:
   execution: interactive
   artifact_store: openspec
   changes_dir: openspec/changes
+  # A change is `spec.md` (requirement delta) + `tasks.md` (the one task ledger).
+  # proposal/design/verify/sync/archive are for changes big enough to earn them,
+  # not the default; the archive is history and is never maintained.
+  change_artifacts: spec.md + tasks.md
   delivery_strategy: ask-on-risk
   review_budget_lines: 400
   strict_tdd: true
+  # Reality, recorded instead of a gate nobody runs: phases are summarized at
+  # their boundaries and work continues, because continuity is the harness rule
+  # and a per-phase approval gate would only be answered with "yes" every time.
+  # The owner's decision points are delivery (push, PR, merge) and scope.
   phase_gates:
-    - pause-and-summarize-after-each-phase
-    - user-approves-next-phase
+    - summarize-at-phase-boundaries
+    - owner-decides-delivery-and-scope
 
 skill_registry: .atl/skill-registry.md
 skills:
