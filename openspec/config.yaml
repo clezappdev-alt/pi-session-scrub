@@ -1,6 +1,5 @@
 project: session-scrub
 type: pi-plugin
-repo_root: /home/cleceta/AI_projects_V3/PI_Agent-MyPlugins/session-scrub
 problem_input: PRD.md
 working_contract: AGENTS.md
 
@@ -41,11 +40,6 @@ sdd:
     - owner-decides-delivery-and-scope
 
 skill_registry: .atl/skill-registry.md
-skills:
-  - /home/cleceta/.pi/agent/skills/pi-plugin-dev/SKILL.md
-  - /home/cleceta/.pi/agent/skills/pi-sessions/SKILL.md
-  - /home/cleceta/.pi/agent/skills/pi-packages/SKILL.md
-  - /home/cleceta/.pi/agent/skills/typescript/SKILL.md
 
 constraints:
   - zero-tokens-by-default-no-before_agent_start-injection
