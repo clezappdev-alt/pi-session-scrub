@@ -272,3 +272,90 @@ test("WG-03: /scrub:init writes through appendPolicyBlock, never a bare writeFil
     "/scrub:init must write the policy block through appendPolicyBlock",
   );
 });
+
+// --- Glossary citations ------------------------------------------------------
+//
+// `docs/glossary.md` carries the vocabulary and, with each term, the `path:line`
+// that backs it. Nothing checked those, so every refactor above a cited line moved
+// the evidence somewhere else and the document went on pointing at whatever landed
+// there — a comment, a blank line, or a line that is no longer in the file.
+//
+// The bar is deliberately modest: the file must exist, the line must be inside it,
+// and it must not be blank. Proving that a line still *says* what the term claims is
+// a different job (a semantic check, not a citation check); this one is what stops
+// the document from drifting silently.
+
+const GLOSSARY_MD = readFileSync(join(REPO_ROOT, "docs", "glossary.md"), "utf8");
+
+/** `<name>.ts:<line>` — the citation form the glossary uses, one or more per row. */
+const CITATION_RE = /\b([A-Za-z0-9_-]+\.ts):(\d{1,6})\b/g;
+
+type Citation = { file: string; line: number; raw: string };
+
+function extractCitations(text: string): Citation[] {
+  return [...text.matchAll(CITATION_RE)].map((m) => ({
+    file: m[1],
+    line: Number(m[2]),
+    raw: m[0],
+  }));
+}
+
+/**
+ * Every citation that does not land on a real, non-blank line of the file it names.
+ *
+ * `readSource` returns `undefined` for a file that cannot be read, so a renamed or
+ * deleted module is reported as stale instead of throwing.
+ */
+function staleCitations(
+  citations: Citation[],
+  readSource: (file: string) => string | undefined,
+): string[] {
+  const problems: string[] = [];
+  for (const c of citations) {
+    const source = readSource(c.file);
+    if (source === undefined) {
+      problems.push(`${c.raw} names a file that does not exist`);
+      continue;
+    }
+    const lines = source.split("\n");
+    if (c.line < 1 || c.line > lines.length) {
+      problems.push(`${c.raw} is past the end of ${c.file} (${lines.length} lines)`);
+      continue;
+    }
+    if (lines[c.line - 1].trim() === "") {
+      problems.push(`${c.raw} lands on a blank line`);
+    }
+  }
+  return problems;
+}
+
+test("glossary citations: every path:line still lands on a line of the code it names", () => {
+  const citations = extractCitations(GLOSSARY_MD);
+  // A parser that finds nothing reports every citation correct. Pin the premise.
+  assert.ok(citations.length > 0, "docs/glossary.md cites no code at all");
+
+  const stale = staleCitations(citations, (file) => {
+    try {
+      return readFileSync(join(HERE, file), "utf8");
+    } catch {
+      return undefined;
+    }
+  });
+
+  assert.deepEqual(stale, [], `stale citations in docs/glossary.md — ${stale.join("; ")}`);
+});
+
+test("the citation check catches a missing file, a line past the end, and a blank line", () => {
+  // The three ways a citation rots, each asserted so the check above cannot pass by
+  // being vacuous.
+  const sources = new Map([
+    ["real.ts", "one\ntwo\n\nfour"],
+  ]);
+  const read = (file: string) => sources.get(file);
+  const at = (file: string, line: number): Citation => ({ file, line, raw: `${file}:${line}` });
+
+  assert.deepEqual(staleCitations([at("real.ts", 1), at("real.ts", 4)], read), []);
+  assert.deepEqual(staleCitations([at("gone.ts", 1)], read), ["gone.ts:1 names a file that does not exist"]);
+  assert.deepEqual(staleCitations([at("real.ts", 9)], read), ["real.ts:9 is past the end of real.ts (4 lines)"]);
+  assert.deepEqual(staleCitations([at("real.ts", 3)], read), ["real.ts:3 lands on a blank line"]);
+});
