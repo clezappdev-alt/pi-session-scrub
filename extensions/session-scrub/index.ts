@@ -37,7 +37,7 @@ import {
   countConversationTurns,
   samePath,
 } from "./classify.ts";
-import { STATE, CLOSE_STATES, formatName, parseName, closeName, resolveVerdict, splitLineage, type State } from "./name.ts";
+import { STATE, CLOSE_STATES, formatName, parseName, closeName, resolveVerdict, splitLineage, type CloseState, type State } from "./name.ts";
 import {
   verifyAdoption,
   freshnessWarning,
@@ -618,13 +618,13 @@ const ScrubCloseParams = Type.Object({
  */
 function handleScrubClose(
   pi: ExtensionAPI,
-  params: Static<typeof ScrubCloseParams>,
+  params: { state: CloseState; text: string },
   currentName: string,
 ): ReturnType<typeof toolResult> {
   // closeName keeps the lineage marker a /scrub:handoff already wrote into the current
   // name and replaces only the free text; formatName always replaced the whole text —
   // measured: the marker was gone four minutes after the handoff wrote it (NB-11).
-  const name = closeName(currentName, params.state as State, params.text);
+  const name = closeName(currentName, params.state, params.text);
   try {
     pi.setSessionName(name);
   } catch (err) {
