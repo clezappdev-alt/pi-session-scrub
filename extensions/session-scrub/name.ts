@@ -34,6 +34,17 @@ export const STATE = {
 } as const;
 export type State = (typeof STATE)[keyof typeof STATE];
 
+/**
+ * The states `scrub_close` may write.
+ *
+ * Every one of these is a fact about THIS session. `traspaso` is the one state that
+ * asserts something about another session, and only `/scrub:handoff` can know it,
+ * because only the handoff creates that session (NB-04). `pausa` is the honest word
+ * while a handoff is pending: the work is here and the next step is known.
+ */
+export const CLOSE_STATES = [STATE.pausa, STATE.abierto, STATE.espera, STATE.hecho] as const;
+export type CloseState = (typeof CLOSE_STATES)[number];
+
 const STATE_VALUES: readonly string[] = Object.values(STATE);
 
 /** Upper bound on the free-text portion of a proposal. Names render in a terminal. */

@@ -239,3 +239,107 @@ test("the result lines pluralize zero sessions", () => {
   assert.equal(formatTrashResult(0, 9), "Trashed 0 sessions. Remaining: 9.");
   assert.equal(formatRestoreResult(0), "Restored 0 sessions.");
 });
+
+// --- Result lines are bounded: a tool error must never break the frame -------------
+
+/** Visible characters of a painted line: the fake theme's tokens are structural, not text. */
+function visible(text: string): string {
+  return text.replace(/<[^>]+>/g, "");
+}
+
+const VALIDATION_FAILURE =
+  'Validation failed for tool "scrub_close":\n' +
+  "  - state: must be equal to constant\n" +
+  "  - state: must be equal to constant\n" +
+  "  - state: must be equal to constant\n" +
+  "  - state: must be equal to constant\n" +
+  "  - state: must match a schema in anyOf\n" +
+  "\nReceived arguments:\n{\n" +
+  '  "state": "traspaso",\n' +
+  '  "text": "x"\n}';
+
+test("a multiline refusal renders as one bounded line, not a 283-character frame line", () => {
+  // Measured on 2026-10-26: this exact payload rendered 283 columns wide and Pi's TUI
+  // aborts when a component emits a line wider than the terminal.
+  const line = renderToolResultLine(
+    { content: [{ type: "text", text: VALIDATION_FAILURE }], isError: true },
+    { expanded: false },
+    theme,
+  ).render(140);
+  assert.equal(line.length, 1, "a result line is always exactly one frame line");
+  assert.equal(line[0].includes("\n"), false, "a newline inside a frame line breaks the renderer");
+  assert.ok(visible(line[0]).length <= 140, `too wide: ${visible(line[0]).length}`);
+  assert.ok(line[0].includes("Validation failed"), "the first sentence is the part worth reading");
+});
+
+test("a narrow terminal still gets one line, cut with the ellipsis", () => {
+  const line = renderToolResultLine(
+    { content: [{ type: "text", text: "x".repeat(300) }], details: { ok: true } },
+    { expanded: false },
+    theme,
+  ).render(40);
+  assert.equal(line.length, 1);
+  assert.ok(visible(line[0]).length <= 40, `too wide: ${visible(line[0]).length}`);
+  assert.ok(visible(line[0]).endsWith("…"), "a cut line says so");
+});
+
+test("a host-flagged error result takes the warning tone even without details", () => {
+  // A validation failure never reaches the handler, so it carries no details.ok; the
+  // host still marks it as an error, and a green check on a refusal is a lie.
+  const line = renderToolResultLine(
+    { content: [{ type: "text", text: "invalid arguments" }], isError: true },
+    { expanded: false },
+    theme,
+  ).render(80);
+  assert.deepEqual(line, ["<warning>invalid arguments</warning>"]);
+});
+
+test("a frame narrower than the check prefix renders nothing instead of overflowing", () => {
+  // At width 2 there is no room for a body beside "✓ ", and any body would push the line
+  // past the frame — the same abort this budget exists to prevent. Report-only finding
+  // R4-001 from the review of the handoff-promise candidate.
+  const line = renderToolResultLine(
+    { content: [{ type: "text", text: "anything" }], details: { ok: true } },
+    { expanded: false },
+    theme,
+  ).render(2);
+  assert.deepEqual(line, [""]);
+});
+
+/**
+ * Cell width, counted conservatively: combining marks take none, everything outside ASCII
+ * takes two, ASCII takes one. This is the oracle for the budget, and it is deliberately
+ * stricter than the implementation so a wide character can never sneak past a frame.
+ */
+function cells(text: string): number {
+  let total = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (cp >= 0x300 && cp <= 0x36f) continue;
+    total += cp < 0x80 ? 1 : 2;
+  }
+  return total;
+}
+
+test("a body of wide characters is budgeted by cells, not by string length", () => {
+  // 40 CJK glyphs are 40 UTF-16 units and 80 cells: a length-based budget fits the data
+  // and overflows the frame, which is the crash this budget exists to prevent
+  // (report-only finding R4-001 from the second review).
+  const line = renderToolResultLine(
+    { content: [{ type: "text", text: "漢".repeat(40) }], details: { ok: true } },
+    { expanded: false },
+    theme,
+  ).render(40);
+  assert.equal(line.length, 1);
+  assert.ok(cells(visible(line[0])) <= 40, `too wide: ${cells(visible(line[0]))} cells`);
+});
+
+test("the check prefix is budgeted by cells too", () => {
+  // "✓" is East Asian Ambiguous: two cells in a conservative reading, plus the space.
+  const line = renderToolResultLine(
+    { content: [{ type: "text", text: "x" }], details: { ok: true } },
+    { expanded: false },
+    theme,
+  ).render(3);
+  assert.deepEqual(line, [""], "three cells are exactly the prefix; no body fits");
+});

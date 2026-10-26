@@ -43,7 +43,7 @@ que los separa: **¿dónde vive lo que sigue?**
 | `pausa:` | Sigue acá, y sabés cuál es el próximo paso. | `scrub_close` o `/name` |
 | `abierto:` | Sigue acá, pero no sabés bien por dónde retomar. | ídem |
 | `espera:` | Está bloqueado en algo que no controlás (una persona, otro equipo). | ídem |
-| `traspaso:` | Sigue en **otra** sesión. | `scrub_close`, y `/scrub:handoff` lo escribe solo |
+| `traspaso:` | Sigue en **otra** sesión. | `/scrub:handoff`, y solo cuando la continuación ya existe (vos podés anunciarlo antes con `/name`: es una intención) |
 | `hecho:` | Terminado. No sigue en ningún lado. | `scrub_close` o `/name` |
 | *(sin prefijo)* | Nadie declaró nada: sucio. | — |
 
@@ -186,9 +186,15 @@ estado (§2.2). Es la tool que hace que la limpieza sea posible sin abrir nada a
 
 ### `scrub_close`
 
-`state` (`pausa`, `abierto`, `espera`, `traspaso`, `hecho`) y `text`. Nombra la sesión con
+`state` (`pausa`, `abierto`, `espera`, `hecho`) y `text`. Nombra la sesión con
 el mismo `setSessionName` que `/name`, así que memoria y disco quedan sincronizados y un
 flush de Pi no puede borrar el nombre. Es la tool que el agente usa al cerrar un bloque.
+
+El quinto estado, `traspaso:`, **no está en esa lista**: afirma que la continuación existe
+en otra sesión, y el único que puede saberlo es `/scrub:handoff`, porque es el único que
+la crea (§6). Mientras el handoff está pendiente, el estado honesto es `pausa:`: el
+trabajo sigue acá y el próximo paso se sabe. Vos sí podés escribir `traspaso:` con
+`/name`; es una intención tuya, no un informe del agente.
 
 `text` lo lee un humano escaneando `/resume`, así que va **el próximo paso en palabras
 llanas**: no lo que implementaste, no nombres de símbolos, no una llamada de API. Una
@@ -211,7 +217,8 @@ Un ciclo, de apertura a cierre, sin ceremonia:
    - Sigue acá pero estás perdido → `abierto:`
    - Bloqueado afuera → `espera:`
    - Terminado → `hecho:`
-   - **Sigue en otra sesión: `traspaso:` + `/scrub:handoff`** (§6)
+   - **Sigue en otra sesión: `pausa:` ahora y `/scrub:handoff`** (§6). El comando la
+     renombra a `traspaso:` recién cuando la sesión nueva ya existe.
 4. **Mantenimiento periódico (cada tanto, no cada día).**
    ```
    /scrub:audit        # ¿qué hay?
@@ -240,31 +247,33 @@ sin prefijo); una sesión nombrada que quieras sacar de la lista se archiva a ma
 
 ## 6. `/scrub:handoff` — continuidad entre sesiones
 
-El nombre `traspaso:` **anuncia** que el trabajo sigue en otro lado. Pero un anuncio sin
+El nombre `traspaso:` **anuncia** que el trabajo sigue en otro lado, y un anuncio sin
 continuación es peor que no tener nombre, porque se confía en él: `/resume` te promete una
-sesión que nunca existió. `/scrub:handoff` convierte el anuncio en la sesión real. (El
-comando se escribe con dos puntos, `/scrub:handoff`; `scrub:handoff` es el espacio de
-nombres que registra el plugin.)
+sesión que nunca existió. Por eso el anuncio no lo escribe nadie de antemano:
+`/scrub:handoff` crea la sesión real y **después** escribe el `traspaso:`. (El comando se
+escribe con dos puntos, `/scrub:handoff`; `scrub:handoff` es el espacio de nombres que
+registra el plugin.)
 
 ### 6.1 Qué hace, paso a paso
 
 1. **Resuelve el pendiente.** Toma el texto que le pasaste como argumento; si no hay,
    toma el texto del nombre actual (sin el prefijo). Si no queda nada, avisa y **no crea
    nada**: un traspaso sin nada que entregar no es un traspaso.
-2. **Renombra la sesión actual** a `traspaso: <id8> · <pendiente>`, sea cual fuere su
-   nombre anterior (`<id8>` son los primeros 8 caracteres del id de la sesión). Lo hace
-   mientras sigue siendo la sesión actual, así que el selector de `/resume` —el *picker*—
-   muestra el par, no dos filas idénticas.
-3. **Busca la última memoria escrita** en las entradas persistidas de esta sesión (no en
+2. **Busca la última memoria escrita** en las entradas persistidas de esta sesión (no en
    una variable en proceso): sólo cuentan las escrituras (`mem_save`, `mem_session_summary`);
    las lecturas no. De ahí saca el `topic_key` y el título.
-4. **Crea la sesión nueva** con `parentSession` apuntando a esta, le inyecta un mensaje
+3. **Crea la sesión nueva** con `parentSession` apuntando a esta, le inyecta un mensaje
    inicial invisible (`display: false`) con origen + pendiente + memoria, y la nombra
    `pausa: desde <id8> · <pendiente>`.
+4. **Recién entonces renombra la vieja** a `traspaso: <id8> · <pendiente>`, sea cual fuere
+   su nombre anterior (`<id8>` son los primeros 8 caracteres del id de la sesión). La
+   escribe **por archivo**, con el mismo stack que usa el triage: copia de respaldo, append y
+   verificación. Si esa escritura falla, te avisa y la vieja queda como estaba: una promesa
+   que no se escribió es mejor que una promesa falsa.
 5. **Te avisa** con el nombre nuevo y la clave de memoria usada.
 
-Después del comando, **estás en la sesión nueva**. La vieja queda intacta, en `/resume`,
-como el otro extremo del par.
+Después del comando, **estás en la sesión nueva**. La vieja queda en `/resume` como el otro
+extremo del par.
 
 ### 6.2 Cómo se ve en `/resume`
 
@@ -296,8 +305,8 @@ sólo viaja el pendiente.
 ### 6.4 Cómo se usa
 
 ```
-# Camino normal: primero el cierre, después el handoff
-/name traspaso: implementar el traspaso con newSession
+# Camino normal: nombrás el pendiente y el handoff hace el resto
+/name pausa: implementar el traspaso con newSession
 /scrub:handoff
 
 # El mismo efecto en un solo paso: el argumento es el pendiente
@@ -305,8 +314,9 @@ sólo viaja el pendiente.
 ```
 
 `/name` es tuyo; `scrub_close` es la tool con la que el agente escribe el mismo nombre
-(estado + texto). El resultado es indistinguible: lo que importa es que el nombre
-traspaso:` declare el pendiente antes de correr el handoff.
+(estado + texto). Lo que importa es que el nombre declare el pendiente: da igual si es
+`pausa:` o el que ya tenías, porque el handoff reescribe el estado a `traspaso:` cuando la
+sesión nueva existe.
 
 Antes de dispararlo, escribí la memoria del bloque (o pedile al agente que la escriba con
 el protocolo de cierre de Engram). Es lo único que el handoff puede llevar como contexto
@@ -316,7 +326,7 @@ de fondo, y su **título** es la única descripción de una línea que viaja.
 
 | Situación | Acción |
 | --- | --- |
-| El bloque termina acá y continúa en otra sesión (otro modelo, otro contexto, otra rama de trabajo) | `traspaso:` + `/scrub:handoff` |
+| El bloque termina acá y continúa en otra sesión (otro modelo, otro contexto, otra rama de trabajo) | `pausa:` mientras esperás, y `/scrub:handoff` (él escribe el `traspaso:`) |
 | La sesión se está quedando sin contexto y querés seguir limpio | ídem: es el caso que lo justifica |
 | El trabajo sigue acá y sabés cómo retomar | `pausa:` a secas, **sin** handoff |
 | El trabajo terminó | `hecho:`, **sin** handoff |

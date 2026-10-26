@@ -23,6 +23,23 @@ export interface RenderTheme {
 /** One-line preview budget. Truncation happens on the RAW string before painting, so no escape sequence is ever measured. */
 const PREVIEW_MAX = 60;
 
+/**
+ * Longest raw body a result line may print.
+ *
+ * A result is not a preview. On a refusal it carries the host's validation error, which is
+ * multi-line and arbitrarily long; rendered as-is it produced a 283-column frame line and
+ * Pi's TUI aborted (measured 2026-10-26 on 1.3.0: "Rendered line 39 exceeds terminal
+ * width"). The budget is applied to the RAW text before painting, so no escape sequence is
+ * ever measured, and it is clamped by the width the host asks for.
+ */
+const RESULT_MAX = 120;
+
+/** Painted before a successful result body. Its width is measured, never assumed. */
+const RESULT_PREFIX = "✓ ";
+
+/** Marks text this module cut. Its own cell width is charged to the budget, not forgotten. */
+const ELLIPSIS = "…";
+
 /** Compact-row head budget: 120 raw characters plus the ellipsis when something was cut. */
 const COMPACT_HEAD_MAX = 120;
 
@@ -31,12 +48,52 @@ export function escapeQuote(text: string): string {
   return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-/** Cut the raw preview text to PREVIEW_MAX characters, appending the ellipsis only when something was cut. */
+/** Cut the raw preview text to PREVIEW_MAX CELLS, appending the ellipsis only when something was cut. */
 function preview(raw: string): string {
-  if (raw.length <= PREVIEW_MAX) {
+  if (textCells(raw) <= PREVIEW_MAX) {
     return raw;
   }
-  return raw.slice(0, PREVIEW_MAX) + "…";
+  return fitCells(raw, PREVIEW_MAX) + ELLIPSIS;
+}
+
+/**
+ * Cells one code point occupies, read conservatively: the worst case is the safe case.
+ *
+ * `strip().length` is not a width. A CJK glyph is one UTF-16 unit and two cells, an emoji is
+ * two units and two cells, a combining mark takes none — so a length budget fits the string
+ * and overflows the frame, which is the crash this module exists to prevent (measured
+ * 2026-10-26: Pi aborts when a component returns a line wider than the terminal).
+ */
+function cellWidth(codePoint: number): number {
+  // Combining marks: they ride the glyph before them.
+  if (codePoint >= 0x300 && codePoint <= 0x36f) {
+    return 0;
+  }
+  return codePoint < 0x80 ? 1 : 2;
+}
+
+/** Cells a whole string occupies, under the same conservative rule. */
+function textCells(text: string): number {
+  let total = 0;
+  for (const ch of text) {
+    total += cellWidth(ch.codePointAt(0) ?? 0);
+  }
+  return total;
+}
+
+/** The longest prefix of `text` that fits in `budget` cells. */
+function fitCells(text: string, budget: number): string {
+  let used = 0;
+  let out = "";
+  for (const ch of text) {
+    const width = cellWidth(ch.codePointAt(0) ?? 0);
+    if (used + width > budget) {
+      break;
+    }
+    used += width;
+    out += ch;
+  }
+  return out;
 }
 
 /** Wrap one already-painted line in the single-line component the wiring site hands to the host. */
@@ -48,6 +105,11 @@ function singleLine(text: string): RenderedLine {
     // Static one-line output: nothing is cached, so re-rendering needs no invalidation.
     invalidate: () => {},
   };
+}
+
+/** Collapse any run of whitespace — newlines included — into one space. */
+function collapseWhitespace(raw: string): string {
+  return raw.replace(/\s+/g, " ").trim();
 }
 
 /** Painted header shared by both call renderers: bold tool name under toolTitle, then the key value under accent. */
@@ -95,14 +157,34 @@ export function renderToolResultLine(
     return singleLine("");
   }
   // Tone reads ONLY the structured ok flag. Its absence means a result without details
-  // (an older entry or a foreign producer), which is rendered on the success side:
-  // the tool writes ok: false explicitly on every refusal.
-  const ok = result.details?.ok !== false;
-  const text = first.text;
-  const line = ok
-    ? theme.fg("success", "✓ ") + theme.fg("muted", text)
-    : theme.fg("warning", text);
-  return singleLine(line);
+  // (an older entry or a foreign producer), which is rendered on the success side: the
+  // tool writes ok: false explicitly on every refusal. The one exception is the host's own
+  // error flag: a call that never reached the handler (a validation failure) carries no
+  // details at all, and a green check on a refusal is a lie.
+  const ok = result.details?.ok !== false && result.isError !== true;
+  const raw = collapseWhitespace(first.text);
+  const prefix = ok ? theme.fg("success", RESULT_PREFIX) : "";
+  const prefixWidth = ok ? textCells(RESULT_PREFIX) : 0;
+  return {
+    // The host tells us how wide the frame is, and aborts the whole TUI on a component
+    // that returns a wider line than that (measured 283 > 140 on 2026-10-26). Cutting the
+    // RAW text here keeps the visible width inside the frame at every terminal size and at
+    // every glyph width, and painting afterwards means an escape sequence is never split.
+    render: (width: number) => {
+      // The prefix alone does not fit: a body beside it would overflow the frame, so the
+      // honest answer is nothing rather than a line wider than the terminal.
+      if (width <= prefixWidth) {
+        return [""];
+      }
+      const budget = Math.min(RESULT_MAX, width - prefixWidth);
+      const body =
+        textCells(raw) <= budget
+          ? raw
+          : fitCells(raw, Math.max(0, budget - textCells(ELLIPSIS))) + ELLIPSIS;
+      return [prefix + theme.fg(ok ? "muted" : "warning", body)];
+    },
+    invalidate: () => {},
+  };
 }
 
 // --- Operator-facing text (pure, pinned by render.test.ts; index.ts only wires them) ---

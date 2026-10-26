@@ -153,6 +153,21 @@ function baseTag(describeOutput: string): string {
   return m ? m[1] : describeOutput;
 }
 
+// --- Source-order and schema gates -------------------------------------------
+
+/** Source slice from `startMarker` up to the next `endMarker`. */
+function sourceSlice(source: string, startMarker: string, endMarker: string): string {
+  const start = source.indexOf(startMarker);
+  assert.notEqual(start, -1, `index.ts has no ${JSON.stringify(startMarker)}`);
+  const end = source.indexOf(endMarker, start);
+  assert.notEqual(
+    end,
+    -1,
+    `index.ts has no ${JSON.stringify(endMarker)} after ${JSON.stringify(startMarker)}`,
+  );
+  return source.slice(start, end);
+}
+
 // --- Tests -------------------------------------------------------------------
 
 test("doccheck surface: docs inventory matches registered surfaces in both directions", () => {
@@ -193,5 +208,49 @@ test("doccheck version anchor: declared tag is the base tag of git describe --ta
     declared,
     actual,
     `docs/behavior.md reflects ${declared} but git describe --tags anchors to ${actual}`,
+  );
+});
+
+// --- NB-03 / NB-04: writers and write order (change session-scrub-handoff-promise) ---
+
+test("NB-03: scrub_close offers CLOSE_STATES and never offers traspaso", () => {
+  // `traspaso` asserts a continuation in another session, and only /scrub:handoff can
+  // know that, because only the handoff creates it. The schema is built from the
+  // host-free constant, so the model-facing enum and the tested set cannot drift.
+  const schema = sourceSlice(INDEX_TS, "const ScrubCloseParams", "\n});");
+  assert.ok(
+    schema.includes("CLOSE_STATES"),
+    "ScrubCloseParams must build its state union from CLOSE_STATES, not from a literal list",
+  );
+  assert.equal(
+    schema.includes("STATE.traspaso"),
+    false,
+    "ScrubCloseParams must not offer traspaso: /scrub:handoff is its only writer",
+  );
+});
+
+test("NB-04: the origin's traspaso is written after the destination is named", () => {
+  // The promise is the last write. A cancelled newSession must write nothing, and a
+  // handoff cannot announce a continuation by rename before the destination exists.
+  // The end marker is the function's own closing brace at column 0: a neighbouring comment
+  // would silently re-scope this gate the day it is reworded (report-only finding
+  // R2-gate-marker from the second review).
+  const handler = sourceSlice(INDEX_TS, "async function handleScrubHandoff(", "\n}\n");
+  assert.equal(
+    handler.includes("pi.setSessionName(plan.originName)"),
+    false,
+    "the origin must not be renamed through the live-session call: after the switch it is not the live session",
+  );
+  const namedDestination = handler.indexOf("appendSessionInfo(plan.destinationName)");
+  const wroteOrigin = handler.indexOf("appendNameToOther(");
+  assert.notEqual(namedDestination, -1, "the destination must still be named in setup");
+  assert.notEqual(
+    wroteOrigin,
+    -1,
+    "the origin's traspaso must be written through appendNameToOther (NB-08 stack)",
+  );
+  assert.ok(
+    namedDestination < wroteOrigin,
+    "the origin's promise must be written after the destination is named",
   );
 });
