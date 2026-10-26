@@ -78,6 +78,23 @@ handler definitions are cited in their own sections.
 | `agent_start` hook | `pi.on("agent_start"` — `index.ts:1676` — handler `handleAgentStart` |
 | `agent_end` hook | `pi.on("agent_end"` — `index.ts:1679` — handler `handleAgentEnd` |
 
+Machine-readable surface inventory — parsed by `doccheck.test.ts` (S2.1/S2.2);
+keep the markers and the `command|tool|hook: <name>` line format verbatim.
+
+<!-- doccheck:surface:start -->
+command: scrub:audit
+command: scrub:apply
+command: scrub:restore
+command: scrub:init
+command: scrub:triage
+command: scrub:adopt
+command: scrub:handoff
+tool: scrub_mark
+tool: scrub_close
+hook: agent_start
+hook: agent_end
+<!-- doccheck:surface:end -->
+
 No `session_start` / `session_shutdown` handler is registered; the absence is
 stated as intentional in the source comment (`Deliberately absent` `index.ts:1632`).
 Consequently
