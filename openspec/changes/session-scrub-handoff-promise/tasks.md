@@ -16,8 +16,9 @@ The requirement delta is `spec.md` in this directory (S1–S8). This file is the
 - [x] **T3 — A2 in the handler.** `/scrub:handoff` creates, seeds and names the destination first; the
   origin's `traspaso:` is written afterwards by path (`appendNameToOther`), with the new session as the
   live path. Tests: a source-order gate (the write appears after the destination is named, and the
-  origin is not renamed through `pi.setSessionName`), plus the cancellation and failure paths through
-  their notify text.
+  origin is not renamed through `pi.setSessionName`) — lexical, so it catches a write moved back
+  before the destination is named and it cannot catch a `setup` that throws — plus the cancellation
+  and failure paths through their notify text.
 
 - [x] **T5 — the frame survives a rejection.** Found by the bench, not by the brief: the rejected call
   rendered a 283-column frame line and Pi aborted. `renderToolResultLine` now collapses whitespace and

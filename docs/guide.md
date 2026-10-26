@@ -43,7 +43,7 @@ que los separa: **¿dónde vive lo que sigue?**
 | `pausa:` | Sigue acá, y sabés cuál es el próximo paso. | `scrub_close` o `/name` |
 | `abierto:` | Sigue acá, pero no sabés bien por dónde retomar. | ídem |
 | `espera:` | Está bloqueado en algo que no controlás (una persona, otro equipo). | ídem |
-| `traspaso:` | Sigue en **otra** sesión. | **solo** `/scrub:handoff`, y solo cuando la continuación ya existe |
+| `traspaso:` | Sigue en **otra** sesión. | `/scrub:handoff`, y solo cuando la continuación ya existe (vos podés anunciarlo antes con `/name`: es una intención) |
 | `hecho:` | Terminado. No sigue en ningún lado. | `scrub_close` o `/name` |
 | *(sin prefijo)* | Nadie declaró nada: sucio. | — |
 
