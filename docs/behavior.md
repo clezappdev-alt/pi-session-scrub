@@ -123,7 +123,8 @@ verdict entry (`name.ts:resolveVerdict`, NB-01/NB-02).
 (`policy.ts:parsePolicyBlock`). The block is a **region**, not a switch: keys are
 read only between the first start marker and the first end marker after it, and
 both must be present in that order — otherwise the block is absent and the
-conservative default applies (PB-01). Markers inside triple-backtick fences are
+conservative default applies (PB-01). Markers inside a fenced code block — three
+or more backticks, or three or more tildes — or quoted as an inline code span are
 quoted text, never markers and never keys, so a template pasted as an example in a
 project's own docs cannot become policy (PB-02). The plugin reads exactly one key:
 `ephemeral-flows:` — comma-separated exact skill-flow names; blank, `#`-comment,
