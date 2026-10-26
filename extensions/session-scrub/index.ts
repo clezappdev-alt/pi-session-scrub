@@ -37,7 +37,7 @@ import {
   countConversationTurns,
   samePath,
 } from "./classify.ts";
-import { STATE, formatName, parseName, resolveVerdict, type State } from "./name.ts";
+import { STATE, formatName, parseName, closeName, resolveVerdict, type State } from "./name.ts";
 import {
   verifyAdoption,
   freshnessWarning,
@@ -624,8 +624,12 @@ const ScrubCloseParams = Type.Object({
 function handleScrubClose(
   pi: ExtensionAPI,
   params: Static<typeof ScrubCloseParams>,
+  currentName: string,
 ): ReturnType<typeof toolResult> {
-  const name = formatName(params.state as State, params.text);
+  // closeName keeps the lineage marker a /scrub:handoff already wrote into the current
+  // name and replaces only the free text; formatName always replaced the whole text —
+  // measured: the marker was gone four minutes after the handoff wrote it (NB-11).
+  const name = closeName(currentName, params.state as State, params.text);
   try {
     pi.setSessionName(name);
   } catch (err) {
@@ -652,7 +656,17 @@ async function handleScrubHandoff(
 ): Promise<void> {
   const originId = ctx.sessionManager.getSessionId();
   const originName = ctx.sessionManager.getSessionName() ?? "";
-  const plan = planHandoffNames(originName, args, originId);
+  // NB-10: the marker's width comes from the population, never a fixed slice. Same rule
+  // as /scrub:audit and /scrub:triage — every session in the project plus the live one,
+  // which may not be on disk yet. Measured: two handoffs four seconds apart produced ids
+  // sharing their first eight characters, so a fixed slice pointed the child's marker at
+  // the child itself.
+  const sessions = await SessionManager.list(ctx.cwd);
+  const abbrevs = uniqueAbbreviations([
+    ...sessions.map((info) => info.id),
+    ...(originId !== undefined ? [originId] : []),
+  ]);
+  const plan = planHandoffNames(originName, args, abbrevOf(abbrevs, originId ?? ""));
   if (plan === undefined) {
     ctx.ui.notify(
       "scrub:handoff: this session names no next step to carry. Name it first with /name " +
@@ -1994,6 +2008,11 @@ export default function (pi: ExtensionAPI): void {
       "never existed, which is worse than no name because it is trusted. " +
       "text is read by a human scanning /resume, so: the NEXT step in plain words, " +
       "not what you implemented, not symbol names, not an API call. One glanceable line. " +
+      "The picker truncates a row around 77 characters, and a lineage marker inherited " +
+      "from a handoff takes about 17 of them, so keep the text well under 60: the end is " +
+      "what gets cut, and the end is the instruction. If this session carries a " +
+      "`desde <id> ·` marker, it is preserved for you — write only the next step, never " +
+      "repeat the marker. " +
       "If a state word would contradict the text — a 'pausa:' whose text says the work " +
       "moves elsewhere — pick the state that matches, because they are mutually exclusive. " +
       "The closing memory's title should state the BLOCK's state — what is built, what is " +
@@ -2014,8 +2033,9 @@ export default function (pi: ExtensionAPI): void {
     // Same delegation as scrub_mark; the close result's tone follows its details.ok too.
     renderCall: (args, theme) => renderCloseCall(args, theme),
     renderResult: (result, options, theme) => renderToolResultLine(result, options, theme),
-    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
-      return handleScrubClose(pi, params);
+    execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
+      // The current name carries any lineage marker closeName must preserve.
+      return handleScrubClose(pi, params, ctx.sessionManager.getSessionName() ?? "");
     },
   });
   pi.on("agent_start", async (_event, ctx) => {

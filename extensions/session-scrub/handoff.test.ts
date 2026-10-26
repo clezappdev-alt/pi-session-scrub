@@ -17,6 +17,7 @@ import {
   buildHandoffMessage,
   MEMORY_WRITE_TOOLS,
 } from "./handoff.ts";
+import { uniqueAbbreviations, abbrevOf } from "./ids.ts";
 
 const ORIGIN = {
   sessionId: "01a10e25-aaaa-7bbb-8ccc-ddddeeeeffff",
@@ -216,6 +217,20 @@ test("a lineage marker is stripped so the text never grows", () => {
   assert.equal(stripLineage("01a11719 · falta probar"), "falta probar");
 });
 
+test("a marker wider than eight characters strips like an eight-character one (NB-12)", () => {
+  // After NB-10 a stored name can carry nine or fifteen hex characters. The floor stays
+  // at eight because the names already on disk carry exactly that, so {8} becomes {8,}:
+  // the ceiling rises, the minimum does not.
+  assert.equal(stripLineage("desde 01a178810 · falta probar"), "falta probar");
+  assert.equal(stripLineage("desde 01a1788103a1bc2 · falta probar"), "falta probar");
+});
+
+test("a hex word without the separator is still left alone, at any width", () => {
+  // Widening the pattern must not turn a plain hex word into a marker: what makes the
+  // marker is the `·`, not the length.
+  assert.equal(stripLineage("desde 01a1788103a1bc2ZZ algo"), "desde 01a1788103a1bc2ZZ algo");
+});
+
 test("only the leading marker is stripped", () => {
   assert.equal(
     stripLineage("desde 01a11719 · ver el id 01a11719 otra vez"),
@@ -239,7 +254,7 @@ test("stripping is idempotent", () => {
 
 test("the marker forms match what planHandoffNames writes", () => {
   // A round-trip guard: whatever the plan emits, stripping must put it back.
-  const plan = planHandoffNames("pausa: revisar", "", "01a11719-aaaa-7bbb-8ccc-ddddeeeeffff");
+  const plan = planHandoffNames("pausa: revisar", "", "01a11719");
   assert.ok(plan);
   assert.equal(stripLineage(plan.destinationName.replace(/^pausa:\s*/, "")), "revisar");
 });
@@ -264,10 +279,36 @@ test("both names carry the id, so the pair can be matched in the picker", () => 
   assert.ok(plan.destinationName.includes("01a11719"));
 });
 
-test("a long session id is shortened", () => {
-  const plan = planHandoffNames("pausa: x", "", "01a11719-aaaa-7bbb-8ccc-ddddeeeeffff");
-  assert.ok(plan);
-  assert.ok(!plan.originName.includes("aaaa"), "full uuid must not leak into the name");
+test("the caller's abbreviation is used verbatim, so its width governs the marker", () => {
+  // The function no longer slices a session id: shortening it is the caller's job
+  // (ids.ts, NB-10). The raw id would leak, which is what stops any call site from
+  // reintroducing a fixed width by accident.
+  const plan = planHandoffNames("pausa: x", "", "01a11719aaaa");
+  assert.equal(plan?.originName, "traspaso: 01a11719aaaa · x");
+  assert.equal(plan?.destinationName, "pausa: desde 01a11719aaaa · x");
+});
+
+test("a burst population widens the marker past eight characters (NB-10)", () => {
+  // Measured on v0.4.0 (S2): two handoffs four seconds apart produced destination ids
+  // sharing their first eight hex characters, so the child's marker also pointed at
+  // itself. The width must come from the population in play — the same helper
+  // /scrub:audit and /scrub:triage already use — never from a fixed slice.
+  const ids = [
+    "01a17881-6e43-77bd-8aaa-bbbbccccdddd",
+    "01a17881-f553-77bd-8aaa-bbbbccccdddd",
+  ];
+  const originAbbrev = abbrevOf(uniqueAbbreviations(ids), ids[1]);
+  assert.ok(originAbbrev.length > 8, `burst ids must widen, got ${originAbbrev.length}`);
+  const plan = planHandoffNames("pausa: medicion NS2", "", originAbbrev);
+  assert.equal(plan?.destinationName, `pausa: desde ${originAbbrev} · medicion NS2`);
+});
+
+test("a lone origin keeps the eight-character abbreviation", () => {
+  const id = "01a177dc-aaaa-7bbb-8ccc-ddddeeeeffff";
+  const originAbbrev = abbrevOf(uniqueAbbreviations([id]), id);
+  assert.equal(originAbbrev.length, 8);
+  const plan = planHandoffNames("pausa: falta el spec", "", originAbbrev);
+  assert.equal(plan?.destinationName, "pausa: desde 01a177dc · falta el spec");
 });
 
 test("a handoff from a pausa session still marks the origin as handed off", () => {
@@ -286,6 +327,27 @@ test("a chain does not accumulate ancestry", () => {
     "the previous marker must not be re-embedded",
   );
   assert.equal(second!.destinationName, "pausa: desde 01a11c59 · falta probar");
+});
+
+test("a three-session chain carries exactly the parent's marker, never the grandparent's (NB-13)", () => {
+  // Owner constraint (S6): solo el marcador del padre. Chaining handoffs must not
+  // accumulate ancestry — neither in the name nor in the text seeded forward.
+  const ids = [
+    "01a11719-aaaa-7bbb-8ccc-ddddeeeeffff",
+    "01a11c59-bbbb-7bbb-8ccc-ddddeeeeffff",
+    "01a11f00-cccc-7bbb-8ccc-ddddeeeeffff",
+  ];
+  const [a, b, c] = ids.map((id) => abbrevOf(uniqueAbbreviations(ids), id));
+  const first = planHandoffNames("pausa: siguiente paso", "", a);
+  const second = planHandoffNames(first!.destinationName, "", b);
+  const third = planHandoffNames(second!.destinationName, "", c);
+  assert.equal(first?.destinationName, `pausa: desde ${a} · siguiente paso`);
+  assert.equal(second?.destinationName, `pausa: desde ${b} · siguiente paso`);
+  assert.equal(third?.destinationName, `pausa: desde ${c} · siguiente paso`);
+  assert.ok(!second!.destinationName.includes(a), "grandparent marker must be gone from the name");
+  assert.ok(!second!.next.includes(a), "grandparent marker must be gone from the seeded text");
+  assert.ok(!third!.destinationName.includes(a), "A never reappears in C's name");
+  assert.ok(!third!.destinationName.includes(b), "B is replaced by C's own parent marker");
 });
 
 test("the two names never collide, whatever the origin was called", () => {
