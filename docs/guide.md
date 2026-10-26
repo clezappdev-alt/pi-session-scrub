@@ -4,8 +4,8 @@ Qué es este plugin, qué comandos tiene, qué tools expone, cómo se trabaja co
 sesión de proyecto y —en detalle— qué hace `/scrub:handoff` y por qué conviene usarlo.
 
 > Esta guía describe el código en **HEAD**. La especificación as-built está en
-> [`behavior.md`](behavior.md) y llega hasta `v0.3.0`; la convención de nombres, `/scrub:handoff`
-> y `/scrub:adopt` son posteriores a esa tag y están marcados allí como no descritos.
+> [`behavior.md`](behavior.md), anclada a la última release (`v0.4.0`), que es la que ya
+> incluye la convención de nombres, `/scrub:handoff` y `/scrub:adopt`.
 > El vocabulario compartido (estado, veredicto, machine keep, fila compacta) está en
 > [`glossary.md`](glossary.md).
 
@@ -414,7 +414,7 @@ próxima sesión concreta, no lo corras.
 | Documento | Qué es |
 | --- | --- |
 | [`../README.md`](../README.md) | Instalación, flags y comportamiento público del paquete. |
-| [`behavior.md`](behavior.md) | Especificación as-built citada a `index.ts` línea por línea (hasta `v0.3.0`). |
+| [`behavior.md`](behavior.md) | Especificación as-built en tres capas, anclada a la última release, citada por símbolo. |
 | [`glossary.md`](glossary.md) | Vocabulario compartido, un término por línea, con su lugar en el código. |
 | [`../PRD.md`](../PRD.md) | El problema que el plugin existe para resolver. |
 | [`../openspec/changes/session-scrub-naming/`](../openspec/changes/session-scrub-naming/) | El change que introdujo la convención, `scrub_close` y `/scrub:handoff`. |

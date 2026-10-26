@@ -1,7 +1,7 @@
 # session-scrub — behavior specification (as-built)
 
 **Status:** as-built documentation, derived from source; requirements are cited by ID from the canonical spec and never restated here.
-**Reflects:** anchored to the released tag `v0.3.0`; Layers A–B describe `master` as reconciled on 2026-10-26 (`ed2fb6a`), which includes behaviour released after that tag — `/scrub:adopt`, `/scrub:handoff`, `scrub_close` and the NB-07 classifier. The anchor is checked against `git describe --tags` by `doccheck.test.ts` and the whole document is re-reconciled at each new tag, not per commit.
+**Reflects:** anchored to the released tag `v0.4.0`; Layers A–B describe `master` at `f4e1e87` (2026-10-26), which is what that tag releases — `/scrub:adopt`, `/scrub:handoff`, `scrub_close`, the NB-07 classifier and the POLICY block as a fence-aware region. Nothing described below is unreleased. The anchor is checked against `git describe --tags` by `doccheck.test.ts` and the whole document is re-reconciled at each new tag, not per commit.
 
 ## How to read this document
 
