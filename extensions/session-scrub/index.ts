@@ -37,7 +37,7 @@ import {
   countConversationTurns,
   samePath,
 } from "./classify.ts";
-import { STATE, formatName, parseName, closeName, resolveVerdict, type State } from "./name.ts";
+import { STATE, formatName, parseName, closeName, resolveVerdict, splitLineage, type State } from "./name.ts";
 import {
   verifyAdoption,
   freshnessWarning,
@@ -60,6 +60,7 @@ import {
   findLastMemoryWrite,
   planHandoffNames,
   buildHandoffMessage,
+  widenSelfToken,
 } from "./handoff.ts";
 import { uniqueAbbreviations, abbrevOf, idFromFilename } from "./ids.ts";
 import {
@@ -666,7 +667,14 @@ async function handleScrubHandoff(
     ...sessions.map((info) => info.id),
     ...(originId !== undefined ? [originId] : []),
   ]);
-  const plan = planHandoffNames(originName, args, abbrevOf(abbrevs, originId ?? ""));
+  // The parent token is inherited verbatim; the own token is derived from the population,
+  // which cannot contain a parent that has no file yet. Keep the two distinguishable.
+  const originAbbrev = widenSelfToken(
+    abbrevOf(abbrevs, originId ?? ""),
+    splitLineage(parseName(originName).text.trim()).parent,
+    originId ?? "",
+  );
+  const plan = planHandoffNames(originName, args, originAbbrev);
   if (plan === undefined) {
     ctx.ui.notify(
       "scrub:handoff: this session names no next step to carry. Name it first with /name " +

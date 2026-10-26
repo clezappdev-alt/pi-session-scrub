@@ -135,6 +135,35 @@ export function stripLineage(text: string): string {
 }
 
 /**
+ * Widen an origin's own token until it differs from the parent token it inherits.
+ *
+ * The parent token is inherited verbatim from the current name, while the origin's own
+ * token comes from the population (NB-10). When the parent session has no file yet — a
+ * handoff run before that session ever spoke — the parent is not in the population, so
+ * both can come out identical and the name reads
+ * `traspaso: desde 01a178c6 · 01a178c6 · …`. Measured in the bench on 2026-10-26: two
+ * tokens the same is worse than a wide one, because it reads as the session pointing at
+ * itself. Widening one hex character at a time is enough to tell them apart, and it is all
+ * that can be done here: the parent's full id is not recoverable from the token it left.
+ */
+export function widenSelfToken(
+  abbrev: string,
+  parent: string | undefined,
+  fullId: string,
+): string {
+  if (parent === undefined) return abbrev;
+  let width = abbrev.length;
+  let token = abbrev;
+  // A uuid's ninth character is the separator dash: a token ending in it is unique but
+  // reads like a typo, so keep breathing until it ends in hex as well.
+  while ((token === parent || token.endsWith("-")) && width < fullId.length) {
+    width += 1;
+    token = fullId.slice(0, width);
+  }
+  return token;
+}
+
+/**
  * Plan the two names a handoff produces.
  *
  * The first real handoff produced two byte-identical names because the destination

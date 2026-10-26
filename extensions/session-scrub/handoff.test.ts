@@ -16,6 +16,7 @@ import {
   planHandoffNames,
   buildHandoffMessage,
   MEMORY_WRITE_TOOLS,
+  widenSelfToken,
 } from "./handoff.ts";
 import { uniqueAbbreviations, abbrevOf } from "./ids.ts";
 
@@ -526,4 +527,32 @@ test("the message stays short enough to cost almost nothing per turn", () => {
 test("the message does not claim a memory it does not have", () => {
   const message = buildHandoffMessage({ ...ORIGIN, memory: undefined });
   assert.ok(!/memoria/i.test(message), "must not mention memory when none was written");
+});
+// widenSelfToken — the own token must not read as the inherited one (measured in the bench)
+
+const B_ID = "01a178c6-f9d3-70a5-85e3-41553ce88c1e";
+
+test("widenSelfToken leaves a token that already differs alone", () => {
+  assert.equal(widenSelfToken("01a178c6-f", "01a178c6", B_ID), "01a178c6-f");
+});
+
+test("widenSelfToken leaves a token alone when there is no parent token", () => {
+  assert.equal(widenSelfToken("01a178c6", undefined, B_ID), "01a178c6");
+});
+
+test("widenSelfToken widens a token that equals the inherited parent token", () => {
+  // The parent session had no file yet, so it was not in the population and the origin's
+  // own abbreviation collided with the token it inherited from its own name.
+  assert.equal(widenSelfToken("01a178c6", "01a178c6", B_ID), "01a178c6-f");
+});
+
+test("widenSelfToken never returns a token ending in the uuid separator", () => {
+  // Nine characters (`01a178c6-`) already differs from the parent, but a token ending in
+  // `-` reads like a typo; the loop keeps going until it ends in hex.
+  const widened = widenSelfToken("01a178c6", "01a178c6", B_ID);
+  assert.ok(!widened.endsWith("-"), `expected a token ending in hex, got ${widened}`);
+});
+
+test("widenSelfToken stops at the full id when the id cannot differ", () => {
+  assert.equal(widenSelfToken("ab", "ab", "ab"), "ab");
 });
