@@ -216,6 +216,8 @@ declare function handleScrubMark(input: {
 ## Requirements
 
 ### REQ-01 — D2 classification predicate with 7-day constant
+
+> **MODIFIED (Slice 4, 2026-10-26):** the predicate below gains verdict precedence and the conversation-turn floor — see **NB-07**, which governs wherever the two disagree. The `messageCount`-only reading is superseded; turns are counted from message roles.
 The system MUST classify every listed session per the D2 decision tree using `MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000`: live sessions are never actionable; named sessions are actionable ONLY with verdict `trash`; unnamed `trash`/`finished` verdicts are candidates; empty sessions are auto-deletable; old sessions (age ≥ MAX_AGE_MS) surface as `old-needs-confirm` with full detail; everything else is kept.
 
 #### Scenario: named session without trash verdict is protected
@@ -312,6 +314,8 @@ The system MUST implement `/scrub-init` creating/updating project-local AGENTS.m
 - THEN it notifies "already exists" and the file is unchanged.
 
 ### REQ-09 — Once-per-session naming hint, user confirms
+
+> **SUPERSEDED IN PART (Slice 4, 2026-10-26):** the clause forbidding programmatic naming is superseded by **NB-03** (`scrub_close`) and **NB-04** (`/scrub:handoff`). Naming is still never automatic and never inferred; the hint requirement below stands.
 The system MUST surface a deterministic `deriveSlug` hint via `setStatus("scrub-name", ...)` at most once per unnamed session (gated by a `session-scrub/name-hint` custom entry plus in-memory once-set) and MUST NOT call `setSessionName()` programmatically; naming happens only via the user's `/name`.
 
 #### Scenario: hint appears once
@@ -650,3 +654,200 @@ The system MUST ship the UX layer as TypeScript strict with const-object verdict
 
 1. TU1 WEAK-first page (7 WEAK + 20 machine → WEAK first, cap 20; 5 WEAK + 20 machine → deferred lists machine shortIds only; 45/45 harness re-run PASS). 2. TU2 compact default schema (machine one-liners + WEAK packs, zero machine full packs). 3. TU3 verbose (adds machine packs, table always present). 4. TU4 bulk machine round-trip (reasonless keeps → ONE confirm → verbatim rationale per file, append-only, `readLatestVerdict` returns `keep`). 5. TU5 WEAK reason-mandatory (reasonless WEAK `finished` rejected zero-write; with reason per-item; mixed bulk-first). 6. TU6 rename round-trip (round-trips to `/resume`; duplicates coexist with path identity; `:name:"   "` rejected zero-write; confirm shows existing name; T1 trial-file round-trip re-confirmed). 7. TU7 deferred transparency (25 qualifying → 5 shortIds in page order; 27/27 listed, nothing dropped). 8. TU8 invariants (stale/ambiguous pre-confirm reject, trash rejected, reasonless-unknown rejected, live absent, non-TUI notify-only zero-write, race skip-warning zero overwrite, dry-run previews zero-write).
 
+
+---
+
+## Slice 4 — the naming block (`session-scrub-naming`, appended by reconciliation 2026-10-26)
+
+**Source:** `openspec/changes/session-scrub-naming/spec.md` (NM-01…NM-05, written 2026-10-07, never synced) + the delivered chain (PRs #1–#6, merge commits `a01b1ff` … `06309a1`) + `design.md` §"The organizing rule", §Slices. Slices 1–3 above stay normative. The only clauses touched are the two marked SUPERSEDED below, and neither is deleted.
+
+**Authority caveat — recorded because it is the failure this slice repairs.** The block shipped two kinds of requirement. NM-01…NM-05 were written before execution. Five surfaces were built with **no requirement at all**: `/scrub:adopt`, `/scrub:handoff`, the `scrub_close` tool, display ids, and the triage-set exclusion. For the second group this section specifies **as built from verified source**, which is the only honest source that exists; it does not invent an intent nobody wrote.
+
+**SUPERSEDED clauses (marked in place, not deleted).**
+- **REQ-09**, clause forbidding the plugin to name sessions programmatically → superseded by **NB-03** and **NB-04**. Naming is still never automatic and never inferred; the plugin names only inside an explicit user action, using the same call `/name` uses.
+- **REQ-01**, predicate → modified by **NB-07** (verdict precedence, conversation-turn floor) and by **NB-01/NB-02** (the name outranks the verdict entry).
+- TR-02 named-first page order and its `+R more deferred` line were already superseded by UX-01/UX-06; both of those hold unchanged.
+
+### Slice-4 type model (additive, strict, flat, no `any`)
+
+```ts
+const STATE = {
+  pausa: "pausa", abierto: "abierto", espera: "espera", traspaso: "traspaso", hecho: "hecho",
+} as const;
+type State = (typeof STATE)[keyof typeof STATE];
+
+export const MIN_CONVERSATION_TURNS = 5;   // NM-05
+const MAX_TEXT = 60;                        // proposal text bound, renders in a terminal
+export const MIN_ABBREV = 8;                // display ids, widened to uniqueness
+export const MEMORY_WRITE_TOOLS = ["mem_save", "mem_session_summary"]; // handoff, writes only
+```
+
+Modules added by the block: `name.ts` (convention), `classify.ts` (extracted predicate), `adopt.ts` (bulk sanitization), `handoff.ts` (traspaso payload), `ids.ts` (display ids), `sessionfs.ts` (the by-path write stack), `render.ts` (host-free formatting). `index.ts` keeps registration and the commands.
+
+### NB-01 — The name is the only channel, and it carries exactly one of five states
+
+The system MUST parse a session name as a state prefix at position 0 followed by `:` — nothing later counts and no other position counts — and MUST treat every other name as state-less free text (`dirty`). The vocabulary is closed and mutually exclusive: `pausa` (work continues here, next step known), `abierto` (here, unknown), `espera` (blocked elsewhere), `traspaso` (continues in another session), `hecho` (finished). Rendering MUST be idempotent and MUST NOT stack a second prefix on text that already carries one.
+
+Rationale, from `design.md` §"The organizing rule": the picker renders `session.name ?? session.firstMessage` and exposes no hook, so the name is the only carrier a human sees in `/resume`. A separate verdict entry beside the name would be a second writer, and two writers diverge the moment one write is skipped — leaving a stale promise, which is worse than no name because a stale promise is trusted.
+
+#### Scenario: an unknown prefix stays text
+- GIVEN a name `reabierto: pruebas`
+- WHEN it is parsed
+- THEN it carries no state and its text is the whole name, so a future vocabulary does not retroactively make old names stateful.
+
+#### Scenario: rendering is idempotent
+- GIVEN `pausa: auth flow`
+- WHEN it is formatted again from a parsed state and text
+- THEN the result is byte-identical to the input.
+
+### NB-02 — The name outranks the verdict entry; the entry survives when the name is silent
+
+The system MUST derive a verdict from the state when the name carries one — `pausa`/`espera` → `paused`, `abierto` → `keep`, `hecho`/`traspaso` → `finished` — and MUST NOT derive `ephemeral` or `trash` from a name, because both assert something a name cannot. When the name carries no state the verdict entry MUST be used, so verdicts written before the convention existed are not discarded. `scrub_mark` MUST refuse to write a verdict entry for a session whose name already declares a state, and MUST say so instead of writing a record that cannot take effect.
+
+#### Scenario: a name-derived verdict protects the session
+- GIVEN a session named `pausa: x` with no verdict entry
+- WHEN `/scrub` classifies it
+- THEN it resolves to `paused` and is kept, not offered.
+
+#### Scenario: marking a stateful session is refused
+- GIVEN a session named `hecho: y`
+- WHEN `scrub_mark` is called
+- THEN it returns an error naming the state and `scrub_close`, and writes nothing.
+
+### NB-03 — `scrub_close` names this session, and `traspaso` obliges more than a name
+
+The system MUST expose a `scrub_close` tool taking `{ state, text }` over exactly the five states, writing the name with the same call `/name` makes (memory and disk together), reporting failure as an error result, and carrying `annotations` `{ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }`. The tool description MUST state that `traspaso` obliges the agent to tell the user to run `/scrub:handoff`, because that command creates the continuation and only the human can run it.
+
+#### Scenario: closing names the live session
+- GIVEN the tool is called with `{ state: "hecho", text: "guía + PR mergeado" }`
+- WHEN the handler runs
+- THEN the live session's name is `hecho: guía + PR mergeado` and an unknown state is rejected by the parameter schema before the handler.
+
+### NB-04 — `/scrub:handoff` creates the continuation it promised
+
+The system MUST implement `/scrub:handoff` as a **command** (not a tool: `ctx.newSession` exists only on `ExtensionCommandContext`, and creating a session is deliberate enough that a human types it), MUST derive the next step from the argument text and fall back to the origin name's text, MUST refuse with a warning when neither yields one, and MUST NOT create a session in that case.
+
+The origin MUST be renamed `traspaso: <shortId> · <next>` **before** `newSession`, and the destination MUST be named `pausa: desde <shortId> · <next>` — always `pausa:`, whatever the origin was, because after the handoff the work does arrive here at a known point, and copying the origin state forward would contradict the exclusivity of the five states. `<shortId>` is the first 8 hex characters of the session id. A leading lineage marker in the origin text MUST be stripped so a chain stays one line.
+
+The destination MUST start with one `custom_message` entry, `display: false`, carrying only pointers: origin short id, origin name, the next step, and — when the session's own entries contain one — the **last memory write** (`mem_save` or `mem_session_summary`, reads never count) as `topic_key` plus its title. The conversation MUST NOT travel, and the observation id MUST NOT appear: tool results are not persisted in the session file, so an id cannot survive a reload, while `topic_key` travels in the call arguments and `mem_search` resolves it.
+
+Rationale, measured: the first real handoff produced two byte-identical names and shipped a `memoryId: null`; the second lacked a one-line account of the previous block and spent three git commands rebuilding it. Both failures are why the names are planned, not inherited, and why the title travels.
+
+#### Scenario: a named pause hands over its text
+- GIVEN the live session is named `pausa: escribir el spec de naming` and `/scrub:handoff` runs with no argument
+- WHEN the plan is built
+- THEN the origin becomes `traspaso: <id8> · escribir el spec de naming`, the destination is named `pausa: desde <id8> · escribir el spec de naming`, and the seeded message names the origin, the pending step, and the last memory's `topic_key` and title.
+
+#### Scenario: nothing to hand over creates nothing
+- GIVEN an unnamed session and `/scrub:handoff` with no argument
+- WHEN the handler runs
+- THEN it notifies the guidance warning and no session is created and no name is written.
+
+### NB-05 — `/scrub:adopt` applies the convention in bulk, without inventing a state
+
+The system MUST implement `/scrub:adopt [--apply] [<id>:<estado> …]` as bulk sanitization of sessions that predate the convention or drifted from it. It MUST NOT rewrite the human text after the prefix, ever. It MUST fill a state without asking only when a machine already asserted one (`paused` → `pausa:`, `finished` → `hecho:`), MUST list every other session as needing a state instead of inventing one — an old session is **not** `pausa:` — and MUST accept the missing states inline as `<idPrefix>:<state>` assignments parsed by a grammar narrower than triage's (no quoted reason: supplying new prose is `/name`'s job).
+
+An assignment whose prefix matches no session, matches more than one, or repeats a prefix MUST be rejected with a warning before any prompt. Unconsumed input MUST be rejected rather than dropped, so "reported nothing, did nothing" cannot happen; a token beginning with `-` is the caller's flag and MUST NOT be rejected as an assignment.
+
+`--apply` in a non-interactive mode (`!isInteractive(ctx)`) MUST behave as a dry-run, like every other write path (REQ-11). The live session MUST never be a target: it MUST be reported as refused by design with a pointer to `scrub_close`, not silently dropped.
+
+NM-03's freshness handling MUST be applied per target: targets inside the 2-minute window get one confirmation each, stating elapsed time, the interleaving risk and the backup location; the settled remainder gets **one** summary confirmation instead of one prompt each.
+
+#### Scenario: machine-derivable states only
+- GIVEN one session with verdict `finished` and one old verdict-less session, both unprefixed
+- WHEN `--apply` runs
+- THEN the first becomes `hecho: …`, the second is listed as needing a state, and nothing is invented for it.
+
+#### Scenario: an ambiguous prefix is refused, not resolved
+- GIVEN two sessions whose ids share the prefix `01a1`
+- WHEN `--apply 01a1:pausa` runs
+- THEN the assignment is rejected as ambiguous and neither file is touched.
+
+#### Scenario: no bypass exists, and saying so is the answer
+- GIVEN `--apply --force`
+- WHEN the command runs
+- THEN it refuses by name with `--force is not a bypass flag; no such flag exists.`, offers no skip path, and writes nothing.
+
+### NB-06 — Display ids are minimal-unique, never shorter than eight
+
+The system MUST render every session reference as a prefix of its id, widened until it is unique within the listing (git's `--abbrev` behaviour) and never shorter than 8 characters. Session ids are uuid v7, so ids minted in a burst share their leading characters — twelve observed sessions agreed on the first eight, and no fixed width would have separated them. A listing that cannot tell two sessions apart is worse than a longer one.
+
+The id inside a session filename MUST be read after the last `_` (`<timestamp>_<uuid>.jsonl`), not from the front: `/scrub:restore` previously showed the date, so every session trashed the same day rendered as `2026-10-` and the prompt could not say which file it was asking about.
+
+#### Scenario: a collision widens the abbreviation
+- GIVEN three ids sharing their first twelve characters
+- WHEN they are rendered in one listing
+- THEN each renders uniquely, at the shortest width that separates them.
+
+### NB-07 — Classification: an explicit verdict outranks the heuristics, and turns floor deletion
+
+`classifySession` MUST evaluate, in this order: live identity (resolved path or id, so a symlink or relative path cannot hide the live session) → named session (candidate only with `trash`, otherwise protected) → explicit verdict `trash`/`finished`/`ephemeral` → **any other explicit verdict → `kept`, before the empty and age checks** → empty session (`messageCount === 0`) → conversation-turn floor → age gate (`MAX_AGE_MS`) → `kept`.
+
+The turn floor MUST count messages whose `role` is `user` or `assistant` (`countConversationTurns`), MUST never use `messageCount` as a proxy for turns, and MUST fail toward protection when the count cannot be supplied: an unknown count protects, it never condemns.
+
+Rationale: an explicit verdict is a decision taken by someone who looked at that session; the empty and age checks are guesses about a population. Measured grounding for the floor, from 75 sessions on 2026-10-07: every trivial session held 2–4 conversation turns and all real work held 6 or more. `messageCount` counted tool results too and inflated by roughly 1.8× (2→3, 6→7, 778→1479), so a floor on it would have protected throwaway sessions.
+
+#### Scenario: keep survives age and emptiness
+- GIVEN an unnamed 30-day-old session with verdict `keep`
+- WHEN it is classified
+- THEN its kind is `kept`, and the empty and age checks never run.
+
+#### Scenario: an unknown turn count protects
+- GIVEN a verdict-less unnamed session of unknown turn count
+- WHEN it is classified
+- THEN it is `kept`, never `old-needs-confirm`.
+
+#### Scenario: short verdict-less session still needs confirmation
+- GIVEN an unnamed 30-day-old session with 3 conversation turns and no verdict
+- WHEN it is classified
+- THEN its kind is `old-needs-confirm` with its detail view.
+
+### NB-08 — The by-path write stack: backup, parse-before, verify-after, and no way around it
+
+Every write to a session other than the live one MUST go through one stack: refuse the live session and a session outside the current runtime's own session directory (NM-01); refuse a file that no longer exists; write a per-file backup into `getBackupDir()` — the plugin's own directory beside the trash root, never `/tmp`; parse the target before writing and refuse when Pi would refuse it; append only, never rewrite an entry and never compute `parentId` by hand; then verify the file still parses, gained **exactly one** entry (physical line count, because Pi's parser skips a malformed line and cannot distinguish "gained one" from "rewritten shorter"), and carries the requested name. Any failure MUST be surfaced as a warning and bucketed as an error — never reported as applied.
+
+For any non-live session whose file was modified within 120 seconds the system MUST raise the confirmation requirement rather than refuse (NM-03), and MUST NOT provide `--force`, `-f`, `--yes`, `-y`, `--skip-guard` or `--no-confirm` — those spellings, and their `=`-suffixed forms, MUST be refused by name so they cannot fall through to a session search that would answer "no sessions matched". A file that cannot be `stat`ed MUST read as settled, not fresh.
+
+#### Scenario: a malformed line does not block the append
+- GIVEN a session file whose array already contains one malformed line
+- WHEN a name is appended
+- THEN the malformed line is untouched and the file gained exactly one entry.
+
+#### Scenario: verification that does not match is an error, not a success
+- GIVEN a write whose post-write read finds a different name
+- WHEN verification runs
+- THEN the result is a warning plus an error bucket, and the summary never counts it as applied.
+
+### NB-09 — Triage never offers a session that already declared its state
+
+`/scrub:triage` MUST exclude from its triage set any session whose **resolved** verdict — name-derived or entry — is defined, in addition to the slice-2 exclusions (live, empty, ephemeral-match). Sessions that declare nothing are exactly the ones worth a human's judgment.
+
+#### Scenario: a stateful session is not offered
+- GIVEN a session named `hecho: algo` with no verdict entry
+- WHEN phase 1 builds the triage set
+- THEN it is absent from the packs, because its name already answered the question.
+
+### Slice-4 verified deviations (AS-BUILT, recorded 2026-10-26)
+
+1. **`espera` derives `paused`, not a distinct verdict.** The five states are finer than the five verdicts; only the name carries `espera`.
+2. **`abierto` derives `keep`**, which under NB-07 makes it permanently protected — the intended reading of "the work is here and I don't know what's next".
+3. **`/scrub:adopt` renders one summary confirmation for settled targets**, per-item confirmations only for the fresh ones. Decided at slice D: a wall of prompts is not a safeguard.
+4. **`/scrub:adopt` accepts `--apply` plus assignments in one argument string**; the parser rejects unconsumed non-flag tokens rather than silently ignoring them.
+5. **`scrub_mark` writes through `pi.appendEntry`** rather than opening a second `SessionManager`: the old shape wrote disk only, so the running session kept a branch without the verdict until a reload, and two writers could interleave on one file.
+6. **`/scrub:handoff` is a command, not a tool**, by API constraint as well as by judgement (see NB-04).
+7. **The handoff message carries the memory's title as well as its `topic_key`**, added after the first measured run showed the next session rebuilding context it could not find.
+
+### Slice-4 manual test scenarios (NS1–NS8, in a live Pi host — Slices 1–3 lists still apply)
+
+1. **NS1 close and read** — `scrub_close` sets `hecho:`/`pausa:` and `/resume` shows it; `scrub_mark` on that session is refused with the pointer.
+2. **NS2 handoff chain** — `/scrub:handoff` twice in a row produces `traspaso: <id8> · …` and `pausa: desde <id8> · …`, and the second message does not carry two lineage markers.
+3. **NS3 memory key** — with a `mem_save` before the handoff, the seeded message names its `topic_key`; with none, the message omits the memory lines instead of inventing one.
+4. **NS4 adopt dry-run** — `/scrub:adopt` lists would-adopt, needs-state, textless, already-adopted and the refused live session, and writes nothing.
+5. **NS5 adopt apply** — `--apply` with one verdict-derived and one inline assignment writes both, backups exist, and each file gained exactly one entry.
+6. **NS6 freshness** — a target written 8 seconds ago yields a per-item confirmation naming elapsed time and the backup path; `--force` is refused by name.
+7. **NS7 display ids** — a burst of sessions created together renders distinct abbreviations in `/scrub`, `/scrub:triage` and `/scrub:restore`.
+8. **NS8 classification** — `keep` on an empty session keeps it; a 778-turn unnamed session is kept; a 3-turn 30-day-old session is `old-needs-confirm`.
+
+### Slice-4 out of scope (unchanged, still deferred)
+
+Cross-home listing, LLM naming, migration of historical sessions without confirmation, any write to another runtime's sessions, a `/scrub:unadopt`, and an undo command (a later `appendSessionInfo` supersedes a name, so none is needed for correctness).
