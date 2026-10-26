@@ -32,18 +32,22 @@ function registeredCommands(source: string): string[] {
 }
 
 /**
- * Tools registered as `pi.registerTool<...>({ ... name: "<name>"` — the tool
- * name is the first `name:` property inside each registerTool block, so the
- * first match after each call's start is taken.
+ * Tool names, anchored on the property indentation.
+ *
+ * The earlier version took the first `name:` after `registerTool`, which would
+ * silently borrow the name of any other property renamed or added above it. Pi's
+ * registration object is formatted with its own properties at four spaces, so
+ * anchoring there turns a formatting drift into a loud failure instead of a
+ * quietly wrong surface.
  */
 function registeredTools(source: string): string[] {
   const starts = [...source.matchAll(/pi\.registerTool\b/g)].map((m) => m.index);
   return starts.map((start) => {
     const rest = source.slice(start);
-    const match = rest.match(/name:\s*"([^"]+)"/);
+    const match = rest.match(/\n {4}name: "([^"]+)"/);
     if (!match) {
       throw new Error(
-        `registerTool call at offset ${start} has no name: "<name>" property`,
+        `registerTool call at offset ${start} has no 4-space-indented name: "<name>" property`,
       );
     }
     return match[1];
@@ -98,10 +102,22 @@ function declaredTag(doc: string): string {
 }
 
 /**
- * Result of resolving the version anchor. `skip` is set when git or tags are
- * unavailable — an unavailable tool must never fail the suite.
+ * Result of resolving the version anchor.
+ *
+ * `skip` is reserved for genuine unavailability — git not installed, no tags, or
+ * a checkout that is not a git repository at all (an installed package has no
+ * `.git`). Any other non-zero exit is a real failure and is thrown: treating it
+ * as `skip` would turn a broken gate into a silent pass, which is the failure
+ * mode this whole file exists to prevent.
  */
 type DescribeResult = { skip?: string; output?: string };
+
+const UNAVAILABLE_PATTERNS = [
+  /no names found/i,
+  /no tags can describe/i,
+  /cannot describe anything/i,
+  /not a git repository/i,
+];
 
 function gitDescribe(): DescribeResult {
   const run = spawnSync("git", ["describe", "--tags"], {
@@ -111,19 +127,29 @@ function gitDescribe(): DescribeResult {
   if (run.error && (run.error as NodeJS.ErrnoException).code === "ENOENT") {
     return { skip: "git is not on PATH — version anchor cannot be checked" };
   }
+  if (run.error) {
+    throw new Error(`could not run git describe --tags: ${run.error.message}`);
+  }
   if (run.status !== 0) {
-    // "fatal: No names found for..." — a repo with no tags.
-    if (/no names found/i.test(run.stderr)) {
-      return { skip: "repo has no tags — version anchor cannot be checked" };
+    const stderr = run.stderr.trim();
+    if (UNAVAILABLE_PATTERNS.some((p) => p.test(stderr))) {
+      return { skip: `version anchor unavailable: ${stderr}` };
     }
-    return { skip: `git describe --tags failed: ${run.stderr.trim()}` };
+    throw new Error(`git describe --tags failed with exit ${run.status}: ${stderr}`);
   }
   return { output: run.stdout.trim() };
 }
 
-/** The base tag of `git describe --tags` output (`v0.3.0-59-ged2fb6a` → `v0.3.0`). */
+/**
+ * The base tag of `git describe --tags` output.
+ *
+ * The tag itself may contain dashes (`v1.0.0-rc1`), so the count-and-sha suffix is
+ * matched from the end: `-<n>-g<sha>`, digits and hex only. Cutting at the first
+ * dash would have returned `v1.0.0` for a pre-release tag and reported a false
+ * mismatch against a correct document.
+ */
 function baseTag(describeOutput: string): string {
-  const m = describeOutput.match(/^([^-]+)-\d+-g[0-9a-f]+$/);
+  const m = describeOutput.match(/^(.*)-\d+-g[0-9a-f]+$/);
   return m ? m[1] : describeOutput;
 }
 
@@ -153,12 +179,13 @@ test("doccheck surface: docs inventory matches registered surfaces in both direc
   assert.ok(problems.length === 0, `doc surface inventory out of sync — ${problems.join("; ")}`);
 });
 
-test("doccheck version anchor: declared tag is the base tag of git describe --tags", () => {
+test("doccheck version anchor: declared tag is the base tag of git describe --tags", (t) => {
   const declared = declaredTag(BEHAVIOR_MD);
   const describe = gitDescribe();
   if (describe.skip) {
-    // Skips carry an explicit reason in the test output.
-    assert.ok(true, `skipped: ${describe.skip}`);
+    // A skip is reported as a skip, never as a pass: a gate that silently counts
+    // "not evaluated" as "green" is worse than no gate.
+    t.skip(describe.skip);
     return;
   }
   const actual = baseTag(describe.output!);
