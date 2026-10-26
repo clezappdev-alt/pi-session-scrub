@@ -407,6 +407,22 @@ incoming text is stripped instead of stacked so a name never carries two heads
 title states the block's state. Annotations: `readOnlyHint: false`,
 `destructiveHint: true`, `idempotentHint: true`, `openWorldHint: false`.
 
+### The rendered lines — one line, inside the frame
+
+`render.ts` owns every line this plugin hands to Pi's TUI: the two tool call previews
+(`render.ts:renderMarkCall`, `renderCloseCall`) and the tool result line
+(`renderToolResultLine`). All three obey one contract: the visible width, measured in **cells**
+under a conservative rule (combining marks 0, ASCII 1, everything else 2), never exceeds the
+`width` the host passes to `render(width)`. This is not cosmetic — Pi aborts the whole TUI when a
+component returns a line wider than the frame (measured 2026-10-26 on 1.3.0: `Rendered line 39
+exceeds terminal width (283 > 140)`).
+
+Degradation is ordered so the line keeps saying what was called: a result body is collapsed to one
+line and truncated by `RESULT_MAX` and the frame; a call preview is shortened, then dropped, and
+only then is the head (tool name plus state) cut with the ellipsis. `PREVIEW_MAX` (60 cells) is a
+content budget that only applies while the frame allows it. Nothing is ever padded, and no renderer
+returns more than one line.
+
 ### The passive naming-hint hooks (REQ-09, hint clause intact)
 
 `agent_start` → `index.ts:handleAgentStart` (user texts of the live entries),

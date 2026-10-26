@@ -29,9 +29,22 @@ test("the mark call paints its title through the toolTitle token and the verdict
   assert.deepEqual(line, ["<toolTitle>**scrub_mark **</toolTitle><accent>keep</accent>"]);
 });
 
-test("a mark reason longer than 60 characters is cut at exactly 60 raw characters and ends with the ellipsis", () => {
+test("a mark reason is cut to the frame at 80 columns, and says so", () => {
+  // 60 characters of content were one cell too many at width 80: the head is 17, the quotes
+  // and the space are 3, so the frame leaves 60 and the ellipsis pays two of them.
   const reason = "a".repeat(70);
   const line = renderMarkCall({ verdict: "paused", reason }, theme).render(80);
+  assert.deepEqual(line, [
+    '<toolTitle>**scrub_mark **</toolTitle><accent>paused</accent> <dim>"' +
+      "a".repeat(58) +
+      '…"</dim>',
+  ]);
+});
+
+test("on a wide terminal the preview keeps its own 60-cell cap", () => {
+  // PREVIEW_MAX is a content budget, not a frame budget: the frame only ever cuts further.
+  const reason = "a".repeat(70);
+  const line = renderMarkCall({ verdict: "paused", reason }, theme).render(200);
   assert.deepEqual(line, [
     '<toolTitle>**scrub_mark **</toolTitle><accent>paused</accent> <dim>"' +
       "a".repeat(60) +
@@ -56,12 +69,12 @@ test("the close call paints its title through the toolTitle token and the state 
   ]);
 });
 
-test("a close text longer than 60 characters is cut at exactly 60 raw characters and ends with the ellipsis", () => {
+test("a close text is cut to the frame at 80 columns, and says so", () => {
   const text = "c".repeat(61);
   const line = renderCloseCall({ state: "pausa", text }, theme).render(80);
   assert.deepEqual(line, [
     '<toolTitle>**scrub_close **</toolTitle><accent>pausa</accent> <muted>"' +
-      "c".repeat(60) +
+      "c".repeat(58) +
       '…"</muted>',
   ]);
 });
@@ -242,9 +255,12 @@ test("the result lines pluralize zero sessions", () => {
 
 // --- Result lines are bounded: a tool error must never break the frame -------------
 
-/** Visible characters of a painted line: the fake theme's tokens are structural, not text. */
+/**
+ * Visible characters of a painted line: the fake theme's `<token>` wrappers and its `**` bold
+ * markers are structural, not text, so neither counts toward the frame.
+ */
 function visible(text: string): string {
-  return text.replace(/<[^>]+>/g, "");
+  return text.replace(/<[^>]+>/g, "").replace(/\*\*/g, "");
 }
 
 const VALIDATION_FAILURE =
@@ -342,4 +358,33 @@ test("the check prefix is budgeted by cells too", () => {
     theme,
   ).render(3);
   assert.deepEqual(line, [""], "three cells are exactly the prefix; no body fits");
+});
+
+// --- The call line is a frame line too (change session-scrub-line-budget) ----------
+
+test("a call line with a wide preview is cut to the frame, not left at 82 cells", () => {
+  // Measured before this change: head 19 cells plus a 60-cell preview plus quotes and a
+  // space is 82, and Pi aborts the TUI on a component line wider than the frame.
+  const line = renderCloseCall({ state: "abierto", text: "漢".repeat(60) }, theme).render(60);
+  assert.equal(line.length, 1);
+  assert.ok(cells(visible(line[0])) <= 60, `too wide: ${cells(visible(line[0]))} cells`);
+});
+
+test("when the preview cannot fit, it is dropped and the head stays readable", () => {
+  const line = renderCloseCall({ state: "abierto", text: "algo" }, theme).render(20);
+  assert.deepEqual(line, ["<toolTitle>**scrub_close **</toolTitle><accent>abierto</accent>"]);
+});
+
+test("when even the head does not fit, the line is cut with the ellipsis", () => {
+  const line = renderMarkCall({ verdict: "paused", reason: "why" }, theme).render(10);
+  assert.equal(line.length, 1);
+  assert.ok(cells(visible(line[0])) <= 10, `too wide: ${cells(visible(line[0]))} cells`);
+  assert.ok(visible(line[0]).endsWith("…"), "a cut line says so");
+});
+
+test("a call line that fits is untouched at any width above it", () => {
+  const wide = renderCloseCall({ state: "hecho", text: "done" }, theme).render(120);
+  const exact = renderCloseCall({ state: "hecho", text: "done" }, theme).render(80);
+  assert.deepEqual(wide, exact);
+  assert.deepEqual(wide, ['<toolTitle>**scrub_close **</toolTitle><accent>hecho</accent> <muted>"done"</muted>']);
 });

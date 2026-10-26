@@ -112,32 +112,76 @@ function collapseWhitespace(raw: string): string {
   return raw.replace(/\s+/g, " ").trim();
 }
 
-/** Painted header shared by both call renderers: bold tool name under toolTitle, then the key value under accent. */
-function callLine(tool: string, key: string, theme: RenderTheme): string {
-  return theme.fg("toolTitle", theme.bold(tool + " ")) + theme.fg("accent", key);
+/** Cells the framing around a preview costs: one separating space and two quotes. */
+const PREVIEW_OVERHEAD = 3;
+
+/** What a call line says: the tool, its state, and an optional preview painted in one token. */
+interface CallLineParts {
+  tool: string;
+  key: string;
+  previewToken: string;
+  previewText: string | undefined;
 }
 
-/** Quoted preview painted in the given token, or nothing when the text is absent. */
-function quotedPreview(token: string, raw: string | undefined, theme: RenderTheme): string {
-  // An empty string is treated as absent: empty quotes say nothing a human could read.
-  if (raw === undefined || raw === "") {
-    return "";
-  }
-  return " " + theme.fg(token, '"' + preview(raw) + '"');
+/**
+ * Render one call line inside the frame.
+ *
+ * The same contract as the result line (S2): the visible width never exceeds the width the
+ * host asks for, measured in cells. Degradation follows S3 — the preview is shortened, then
+ * dropped, and only then is the head itself cut, because the tool and its state are the part
+ * the line exists to say. `PREVIEW_MAX` still caps the content on a wide terminal; the frame
+ * budget only ever cuts further.
+ */
+function callLine(parts: CallLineParts, theme: RenderTheme): RenderedLine {
+  const headRaw = parts.tool + " ";
+  const headCells = textCells(headRaw) + textCells(parts.key);
+  const previewRaw = collapseWhitespace(parts.previewText ?? "");
+  const paintHead = (): string =>
+    theme.fg("toolTitle", theme.bold(headRaw)) + theme.fg("accent", parts.key);
+  return {
+    render: (width: number) => {
+      if (headCells > width) {
+        const room = Math.max(0, width - textCells(ELLIPSIS));
+        return [theme.fg("toolTitle", theme.bold(fitCells(headRaw + parts.key, room) + ELLIPSIS))];
+      }
+      const head = paintHead();
+      // An empty preview is treated as absent: empty quotes say nothing a human could read.
+      if (previewRaw === "") {
+        return [head];
+      }
+      const room = width - headCells - PREVIEW_OVERHEAD;
+      if (room < textCells(ELLIPSIS) + 1) {
+        return [head];
+      }
+      const capped = preview(previewRaw);
+      const body =
+        textCells(capped) > room
+          ? fitCells(capped, Math.max(0, room - textCells(ELLIPSIS))) + ELLIPSIS
+          : capped;
+      return [head + " " + theme.fg(parts.previewToken, '"' + body + '"')];
+    },
+    invalidate: () => {},
+  };
 }
 
 export function renderMarkCall(
   args: { verdict: string; reason?: string },
   theme: RenderTheme,
 ): RenderedLine {
-  return singleLine(callLine("scrub_mark", args.verdict, theme) + quotedPreview("dim", args.reason, theme));
+  return callLine(
+    { tool: "scrub_mark", key: args.verdict, previewToken: "dim", previewText: args.reason },
+    theme,
+  );
 }
 
 export function renderCloseCall(
   args: { state: string; text: string },
   theme: RenderTheme,
 ): RenderedLine {
-  return singleLine(callLine("scrub_close", args.state, theme) + quotedPreview("muted", args.text, theme));
+  return callLine(
+    { tool: "scrub_close", key: args.state, previewToken: "muted", previewText: args.text },
+    theme,
+  );
 }
 
 /** Structural shape of a tool result this module renders; details.ok is the only tone signal. */
