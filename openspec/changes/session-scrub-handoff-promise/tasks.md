@@ -44,7 +44,11 @@ The requirement delta is `spec.md` in this directory (S1–S8). This file is the
 - `75a5c9e` — code: the result line stays inside the frame (S8), found by the live bench.
 - (this commit) — docs: `behavior.md` Layer B, canonical NB-03/NB-04 amended plus `## Slice 5`,
   `docs/guide.md` state table and §6, `README.md`.
-- Gates on the tip: **256/256 tests, typecheck exit 0**.
+- `b323f98` — docs: two pointers still counted seven specs after S8 joined the delta.
+- `64f86fb` — code: R4-001 (a frame narrower than the prefix overflowed), R2-3 (the prefix
+  width was a magic 2) and R2-4 (the assertion cast to `never`) — the report-only findings
+  from the review of this candidate, taken as separate later work.
+- Gates on the tip: **257/257 tests, typecheck exit 0**.
 - Live bench (Pi 1.3.0, tmux, scratch project, pinned `--session-dir`, removed afterwards):
   `/resume` showed the pair `pausa: desde 01a178fb · …` / `traspaso: 01a178fb · …`; the child header
   carried `parentSession`; the NB-08 backup was written beside the pinned session dir; the seeded
