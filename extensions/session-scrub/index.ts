@@ -721,10 +721,10 @@ async function handleScrubHandoff(
       // does the origin become `traspaso:`. Written by path, through the NB-08 stack,
       // with the fresh session as the live path to refuse. A failure here is reported
       // honestly and never fails the switch.
+      // One variable carries the outcome and the tone is derived from it: a note exists only
+      // when something went wrong, so a separate flag could only ever disagree with it.
       let originNote = "";
-      let originFailed = false;
       if (originFile === undefined) {
-        originFailed = true;
         originNote = "; the origin has no session file, so it was left as it was";
       } else {
         try {
@@ -735,7 +735,6 @@ async function handleScrubHandoff(
             backupDir,
           );
         } catch (err) {
-          originFailed = true;
           originNote = `; the origin could not be renamed (${errorMessage(err)}) — set it by hand in that session`;
         }
       }
@@ -743,7 +742,7 @@ async function handleScrubHandoff(
         (memory?.topicKey !== undefined
           ? `Handoff: ${plan.destinationName} — context in memory ${memory.topicKey}`
           : `Handoff: ${plan.destinationName} — no prior memory in this session`) + originNote,
-        originFailed ? "warning" : "info",
+        originNote === "" ? "info" : "warning",
       );
     },
   });

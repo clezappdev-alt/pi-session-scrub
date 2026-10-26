@@ -305,3 +305,41 @@ test("a frame narrower than the check prefix renders nothing instead of overflow
   ).render(2);
   assert.deepEqual(line, [""]);
 });
+
+/**
+ * Cell width, counted conservatively: combining marks take none, everything outside ASCII
+ * takes two, ASCII takes one. This is the oracle for the budget, and it is deliberately
+ * stricter than the implementation so a wide character can never sneak past a frame.
+ */
+function cells(text: string): number {
+  let total = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (cp >= 0x300 && cp <= 0x36f) continue;
+    total += cp < 0x80 ? 1 : 2;
+  }
+  return total;
+}
+
+test("a body of wide characters is budgeted by cells, not by string length", () => {
+  // 40 CJK glyphs are 40 UTF-16 units and 80 cells: a length-based budget fits the data
+  // and overflows the frame, which is the crash this budget exists to prevent
+  // (report-only finding R4-001 from the second review).
+  const line = renderToolResultLine(
+    { content: [{ type: "text", text: "漢".repeat(40) }], details: { ok: true } },
+    { expanded: false },
+    theme,
+  ).render(40);
+  assert.equal(line.length, 1);
+  assert.ok(cells(visible(line[0])) <= 40, `too wide: ${cells(visible(line[0]))} cells`);
+});
+
+test("the check prefix is budgeted by cells too", () => {
+  // "✓" is East Asian Ambiguous: two cells in a conservative reading, plus the space.
+  const line = renderToolResultLine(
+    { content: [{ type: "text", text: "x" }], details: { ok: true } },
+    { expanded: false },
+    theme,
+  ).render(3);
+  assert.deepEqual(line, [""], "three cells are exactly the prefix; no body fits");
+});

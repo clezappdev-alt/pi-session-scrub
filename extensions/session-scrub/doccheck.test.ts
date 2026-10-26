@@ -232,11 +232,10 @@ test("NB-03: scrub_close offers CLOSE_STATES and never offers traspaso", () => {
 test("NB-04: the origin's traspaso is written after the destination is named", () => {
   // The promise is the last write. A cancelled newSession must write nothing, and a
   // handoff cannot announce a continuation by rename before the destination exists.
-  const handler = sourceSlice(
-    INDEX_TS,
-    "async function handleScrubHandoff(",
-    "/** Sessions already offered the hint",
-  );
+  // The end marker is the function's own closing brace at column 0: a neighbouring comment
+  // would silently re-scope this gate the day it is reworded (report-only finding
+  // R2-gate-marker from the second review).
+  const handler = sourceSlice(INDEX_TS, "async function handleScrubHandoff(", "\n}\n");
   assert.equal(
     handler.includes("pi.setSessionName(plan.originName)"),
     false,

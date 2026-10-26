@@ -34,8 +34,11 @@ const PREVIEW_MAX = 60;
  */
 const RESULT_MAX = 120;
 
-/** Painted before a successful result body. Two cells wide, measured, never assumed. */
+/** Painted before a successful result body. Its width is measured, never assumed. */
 const RESULT_PREFIX = "✓ ";
+
+/** Marks text this module cut. Its own cell width is charged to the budget, not forgotten. */
+const ELLIPSIS = "…";
 
 /** Compact-row head budget: 120 raw characters plus the ellipsis when something was cut. */
 const COMPACT_HEAD_MAX = 120;
@@ -45,12 +48,52 @@ export function escapeQuote(text: string): string {
   return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-/** Cut the raw preview text to PREVIEW_MAX characters, appending the ellipsis only when something was cut. */
+/** Cut the raw preview text to PREVIEW_MAX CELLS, appending the ellipsis only when something was cut. */
 function preview(raw: string): string {
-  if (raw.length <= PREVIEW_MAX) {
+  if (textCells(raw) <= PREVIEW_MAX) {
     return raw;
   }
-  return raw.slice(0, PREVIEW_MAX) + "…";
+  return fitCells(raw, PREVIEW_MAX) + ELLIPSIS;
+}
+
+/**
+ * Cells one code point occupies, read conservatively: the worst case is the safe case.
+ *
+ * `strip().length` is not a width. A CJK glyph is one UTF-16 unit and two cells, an emoji is
+ * two units and two cells, a combining mark takes none — so a length budget fits the string
+ * and overflows the frame, which is the crash this module exists to prevent (measured
+ * 2026-10-26: Pi aborts when a component returns a line wider than the terminal).
+ */
+function cellWidth(codePoint: number): number {
+  // Combining marks: they ride the glyph before them.
+  if (codePoint >= 0x300 && codePoint <= 0x36f) {
+    return 0;
+  }
+  return codePoint < 0x80 ? 1 : 2;
+}
+
+/** Cells a whole string occupies, under the same conservative rule. */
+function textCells(text: string): number {
+  let total = 0;
+  for (const ch of text) {
+    total += cellWidth(ch.codePointAt(0) ?? 0);
+  }
+  return total;
+}
+
+/** The longest prefix of `text` that fits in `budget` cells. */
+function fitCells(text: string, budget: number): string {
+  let used = 0;
+  let out = "";
+  for (const ch of text) {
+    const width = cellWidth(ch.codePointAt(0) ?? 0);
+    if (used + width > budget) {
+      break;
+    }
+    used += width;
+    out += ch;
+  }
+  return out;
 }
 
 /** Wrap one already-painted line in the single-line component the wiring site hands to the host. */
@@ -121,12 +164,12 @@ export function renderToolResultLine(
   const ok = result.details?.ok !== false && result.isError !== true;
   const raw = collapseWhitespace(first.text);
   const prefix = ok ? theme.fg("success", RESULT_PREFIX) : "";
-  const prefixWidth = ok ? RESULT_PREFIX.length : 0;
+  const prefixWidth = ok ? textCells(RESULT_PREFIX) : 0;
   return {
     // The host tells us how wide the frame is, and aborts the whole TUI on a component
     // that returns a wider line than that (measured 283 > 140 on 2026-10-26). Cutting the
-    // RAW text here keeps the visible width inside the frame at every terminal size, and
-    // painting afterwards means an escape sequence is never split.
+    // RAW text here keeps the visible width inside the frame at every terminal size and at
+    // every glyph width, and painting afterwards means an escape sequence is never split.
     render: (width: number) => {
       // The prefix alone does not fit: a body beside it would overflow the frame, so the
       // honest answer is nothing rather than a line wider than the terminal.
@@ -134,7 +177,10 @@ export function renderToolResultLine(
         return [""];
       }
       const budget = Math.min(RESULT_MAX, width - prefixWidth);
-      const body = raw.length > budget ? raw.slice(0, Math.max(0, budget - 1)) + "…" : raw;
+      const body =
+        textCells(raw) <= budget
+          ? raw
+          : fitCells(raw, Math.max(0, budget - textCells(ELLIPSIS))) + ELLIPSIS;
       return [prefix + theme.fg(ok ? "muted" : "warning", body)];
     },
     invalidate: () => {},
