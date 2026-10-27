@@ -287,7 +287,7 @@ async function auditSessions(ctx: ExtensionCommandContext): Promise<{
     path: ctx.sessionManager.getSessionFile(),
     id: ctx.sessionManager.getSessionId(),
   };
-  const sessions = await SessionManager.list(ctx.cwd);
+  const sessions = await SessionManager.list(ctx.cwd, ctx.sessionManager.getSessionDir());
   // Abbreviations come from every session in the project plus the live one (which may
   // not be on disk yet). Derived from the full set, never a filtered subset, so the
   // same session shows the same prefix in every command: uuid v7 sessions created in
@@ -425,7 +425,7 @@ async function handleScrubApply(args: string, ctx: ExtensionCommandContext): Pro
       ctx.ui.notify(`Skipped ${a.shortId}: ${errorMessage(err)}`, "warning");
     }
   }
-  const relisted = await SessionManager.list(ctx.cwd);
+  const relisted = await SessionManager.list(ctx.cwd, ctx.sessionManager.getSessionDir());
   ctx.ui.notify(formatTrashResult(trashed, relisted.length), "info");
 }
 
@@ -634,7 +634,7 @@ async function handleScrubHandoff(
   // which may not be on disk yet. Measured: two handoffs four seconds apart produced ids
   // sharing their first eight characters, so a fixed slice pointed the child's marker at
   // the child itself.
-  const sessions = await SessionManager.list(ctx.cwd);
+  const sessions = await SessionManager.list(ctx.cwd, ctx.sessionManager.getSessionDir());
   const abbrevs = uniqueAbbreviations([
     ...sessions.map((info) => info.id),
     ...(originId !== undefined ? [originId] : []),
@@ -1343,7 +1343,7 @@ async function gatherTriageCandidates(ctx: ExtensionCommandContext): Promise<{
     path: ctx.sessionManager.getSessionFile(),
     id: ctx.sessionManager.getSessionId(),
   };
-  const sessions = await SessionManager.list(ctx.cwd);
+  const sessions = await SessionManager.list(ctx.cwd, ctx.sessionManager.getSessionDir());
   // Full id set, before any filtering: the digest packs, the deferred line and the
   // --apply resolutions must all print the same prefix for the same session, and a
   // subset-derived width would make the triage phases disagree with each other and
@@ -1721,7 +1721,7 @@ const STATE_VALUES_HINT = Object.values(STATE).join("|");
 async function gatherAdoptionCandidates(
   ctx: ExtensionCommandContext,
 ): Promise<AdoptionCandidate[]> {
-  const sessions = await SessionManager.list(ctx.cwd);
+  const sessions = await SessionManager.list(ctx.cwd, ctx.sessionManager.getSessionDir());
   const out: AdoptionCandidate[] = [];
   for (const info of sessions) {
     out.push({

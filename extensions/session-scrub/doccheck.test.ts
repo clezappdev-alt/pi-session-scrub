@@ -428,3 +428,47 @@ test("README anchor: the declared tag, the install tag and git describe agree", 
   const mismatch = anchorMismatch(declared!, describe.output!);
   assert.equal(mismatch, undefined, `README.md: ${mismatch}`);
 });
+
+// --- Session discovery must honour the resolved session dir ------------------
+//
+// `SessionManager.list(cwd)` without the second argument reads the default
+// directory (`~/.pi/agent/sessions/--<encoded-cwd>--`), while the trash and backup
+// roots derive from `ctx.sessionManager.getSessionDir()`. Two roots, one command:
+// the plugin lists one directory and moves files out of another. The live session
+// still shows up (it comes from `ctx`, not disk), so the symptom reads as "1
+// session" instead of "0" — found in the v0.6.0 manual trial, invisible to a
+// host-free unit test because `SessionManager` is absent there, not simulated.
+
+/** The argument list of every `needle(` call, with balanced parentheses. */
+function callArguments(source: string, needle: string): string[] {
+  const out: string[] = [];
+  let from = 0;
+  for (;;) {
+    const at = source.indexOf(needle, from);
+    if (at === -1) return out;
+    const open = at + needle.length - 1;
+    let depth = 0;
+    for (let i = open; i < source.length; i += 1) {
+      if (source[i] === "(") depth += 1;
+      else if (source[i] === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          out.push(source.slice(open + 1, i));
+          break;
+        }
+      }
+    }
+    from = at + needle.length;
+  }
+}
+
+test("session discovery asks the session manager for its own directory", () => {
+  const calls = callArguments(INDEX_TS, "SessionManager.list");
+  assert.ok(calls.length > 0, "index.ts has no SessionManager.list call at all");
+  const withoutDir = calls.filter((args) => !args.includes("getSessionDir"));
+  assert.deepEqual(
+    withoutDir,
+    [],
+    `SessionManager.list called without the resolved session dir — ${withoutDir.map((a) => `list(${a.trim()})`).join("; ")}`,
+  );
+});

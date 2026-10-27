@@ -82,7 +82,10 @@ On `/scrub:triage` and `/scrub:adopt` a bypass-shaped token is refused by name
 
 ### Storage layout
 
-- Session discovery always goes through `SessionManager.list(ctx.cwd)`; the live
+- Session discovery always goes through
+  `SessionManager.list(ctx.cwd, ctx.sessionManager.getSessionDir())`, so a custom
+  `--session-dir` is the directory it reads *and* the one the trash and backups
+  derive from; the live
   session is read through `ctx.sessionManager.getEntries()` and never opened from
   disk (`index.ts:auditSessions`).
 - Trash dir: `sessionfs.ts:getTrashDir` —
