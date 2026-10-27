@@ -3,9 +3,10 @@
 Qué es este plugin, qué comandos tiene, qué tools expone, cómo se trabaja con él en una
 sesión de proyecto y —en detalle— qué hace `/scrub:handoff` y por qué conviene usarlo.
 
-> Esta guía describe el código en **HEAD**. La especificación as-built está en
-> [`behavior.md`](behavior.md), anclada a la última release (`v0.4.2`), que es la que ya
-> incluye la convención de nombres, `/scrub:handoff` y `/scrub:adopt`.
+> Esta guía describe el código en **HEAD**: lo que hay en `master`, que puede ir un paso
+> adelante del último tag. La especificación as-built está en [`behavior.md`](behavior.md),
+> anclada al último release y verificada contra `git describe` — el número de versión vive
+> ahí y sólo ahí.
 > El vocabulario compartido (estado, veredicto, machine keep, fila compacta) está en
 > [`glossary.md`](glossary.md).
 
@@ -264,12 +265,15 @@ registra el plugin.)
    las lecturas no. De ahí saca el `topic_key` y el título.
 3. **Crea la sesión nueva** con `parentSession` apuntando a esta, le inyecta un mensaje
    inicial invisible (`display: false`) con origen + pendiente + memoria, y la nombra
-   `pausa: desde <id8> · <pendiente>`.
-4. **Recién entonces renombra la vieja** a `traspaso: <id8> · <pendiente>`, sea cual fuere
-   su nombre anterior (`<id8>` son los primeros 8 caracteres del id de la sesión). La
-   escribe **por archivo**, con el mismo stack que usa el triage: copia de respaldo, append y
-   verificación. Si esa escritura falla, te avisa y la vieja queda como estaba: una promesa
-   que no se escribió es mejor que una promesa falsa.
+   `pausa: desde <abbr> · <pendiente>`.
+4. **Recién entonces renombra la vieja** a `traspaso: <abbr> · <pendiente>`, sea cual fuere
+   su nombre anterior; si la vieja ya venía de otro handoff, el nombre re-emite el linaje
+   (`traspaso: desde <parent> · <abbr> · <pendiente>`) en vez de perderlo. `<abbr>` es la
+   abreviatura única mínima del proyecto, no un slice fijo de ocho: el ancho lo decide el
+   conjunto de sesiones que se está mostrando (glossary §8). La escribe **por archivo**, con
+   el mismo stack que usa el triage: copia de respaldo, append y verificación. Si esa
+   escritura falla, te avisa y la vieja queda como estaba: una promesa que no se escribió es
+   mejor que una promesa falsa.
 5. **Te avisa** con el nombre nuevo y la clave de memoria usada.
 
 Después del comando, **estás en la sesión nueva**. La vieja queda en `/resume` como el otro
@@ -282,9 +286,9 @@ pausa: desde 01a10e25 · implementar el traspaso        ← la nueva, donde segu
 traspaso: 01a10e25 · implementar el traspaso           ← la que entregó el trabajo
 ```
 
-Los dos nombres llevan ese `<id8>` para que puedas reconocer el par sin abrir nada. Si
-encadenás otro handoff, el marcador viejo se quita antes de escribir el nuevo, así el
-texto no crece como `desde a · desde b · desde c`.
+Los dos nombres llevan la misma abreviatura para que puedas reconocer el par sin abrir
+nada. Si encadenás otro handoff el linaje se re-emite, no se apila: una cadena de tres se
+lee `desde <a> · <b> · <pendiente>`, nunca `desde a · desde b · …`.
 
 ### 6.3 El mensaje con el que arranca la sesión nueva
 
@@ -341,18 +345,12 @@ próxima sesión concreta, no lo corras.
 - **Continuidad sin reexplorar.** La sesión nueva sabe de dónde viene y qué sigue en su
   primer token. No gasta tres comandos de git ni una búsqueda para reconstruir el estado.
 - **Contexto barato.** El detalle queda en Engram; el mensaje inicial lleva el
-  `topic_key` y el título. Unas pocas decenas de tokens, una vez, en lugar del volcado de
-  la conversación anterior.
+  `topic_key` y el título. Un mensaje corto, una sola vez, en lugar del volcado de la
+  conversación anterior.
 - **Señal en el selector, no en tu memoria.** El par `traspaso:` / `pausa: desde …` se lee
   en `/resume` antes de abrir nada: sabés qué sesión entregó y cuál recibió.
-- **Trazabilidad real.** `parentSession` vincula las dos sesiones en Pi, y el id corto en
-  ambos nombres hace visible el vínculo en el selector.
-- **Determinista y sin modelo.** No hay scoring, ranking ni llamada al modelo: "la última
-  memoria **escrita** antes del traspaso es el traspaso". Misma entrada, mismo mensaje.
-- **Sobrevive a `/reload`.** El handoff lee las entradas persistidas de la sesión, no una
-  variable en proceso. Un reload no le borra el contexto al destino.
-- **Cadena sin acumulación.** Cada handoff reemplaza el marcador de linaje anterior: una
-  cadena larga sigue siendo una línea legible.
+- **Trazabilidad real.** `parentSession` vincula las dos sesiones en Pi, y la abreviatura
+  en ambos nombres hace visible el vínculo en el selector.
 - **Nada se borra.** El handoff no mueve a basura ni cierra la sesión de origen: queda en
   `/resume`, protegida por su nombre, como registro de lo entregado.
 
@@ -371,9 +369,11 @@ próxima sesión concreta, no lo corras.
   mensaje apunta al `topic_key`, que sí es durable, y `mem_search` lo resuelve.
 - **El destino siempre nace `pausa:`.** Aunque el pendiente diga que el trabajo vuelve a
   moverse: si se mueve otra vez, se hace otro handoff.
-- **Cancelar no deshace el renombre.** El origen ya se renombró antes de crear la sesión
-  nueva, así que si cancelás quedan un `traspaso:` sin continuación y ningún mensaje. Si
-  pasa, volvé a correr el comando: es idempotente en la práctica.
+- **Cancelar no escribe nada.** El orden es destino primero, promesa al final: si cancelás
+  la sesión nueva, el origen queda exactamente como estaba, sin `traspaso:` colgado y sin
+  mensaje. El riesgo real es el opuesto y es más raro: si la escritura del origen falla
+  *después* de que la sesión nueva ya existe, queda un `pausa: desde …` sin su `traspaso:`;
+  el comando te lo reporta como advertencia con el arreglo, no como éxito.
 - **Un `traspaso:` sin handoff es una promesa falsa.** Si lo nombraste y no corriste el
   comando, `/resume` anuncia una continuación que nunca existió. Es el error que este
   comando existe para evitar; no lo dejes colgado.
@@ -423,8 +423,8 @@ próxima sesión concreta, no lo corras.
 
 | Documento | Qué es |
 | --- | --- |
-| [`../README.md`](../README.md) | Instalación, flags y comportamiento público del paquete. |
-| [`behavior.md`](behavior.md) | Especificación as-built en tres capas, anclada a la última release, citada por símbolo. |
+| [`../README.md`](../README.md) | Instalación, primer arranque y comandos por momento. |
+| [`behavior.md`](behavior.md) | Especificación as-built en tres capas, anclada al último release, citada por símbolo. |
 | [`glossary.md`](glossary.md) | Vocabulario compartido, un término por línea, con su lugar en el código. |
 | [`../PRD.md`](../PRD.md) | El problema que el plugin existe para resolver. |
-| [`../openspec/changes/session-scrub-naming/`](../openspec/changes/session-scrub-naming/) | El change que introdujo la convención, `scrub_close` y `/scrub:handoff`. |
+| [`../openspec/changes/archive/2026-10-26-session-scrub-naming/`](../openspec/changes/archive/2026-10-26-session-scrub-naming/) | El change, ya archivado, que introdujo la convención, `scrub_close` y `/scrub:handoff`. |
