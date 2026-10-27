@@ -1,23 +1,56 @@
+<div align="center">
+
 # pi-session-scrub
 
-Keep your Pi `/resume` list clean and descriptive — without the per-session opening ceremony.
+**Keep your Pi `/resume` list clean, descriptive and honest — with zero tokens spent
+and nothing deleted by surprise.**
 
-> Human-facing usage guide (Spanish): [`docs/guide.md`](docs/guide.md) — objective, current
-> commands, tools, the project-session workflow, and `/scrub:handoff` in detail.
-> As-built behavior specification in three layers — surface, contract, evidence — citing
-> code by symbol: [`docs/behavior.md`](docs/behavior.md).
-> Vocabulary used across the code and the spec, one term per line with its `path:line`:
-> [`docs/glossary.md`](docs/glossary.md) (Spanish, owner-facing).
-> Anchored to the released tag `v0.6.1`; describes `master` as reconciled on 2026-10-26 — that
-> reconciliation is what the tag contains — and is re-reconciled at each tag, not per commit.
-> The three `docs/` files above are written in Spanish, for the owner; this README is the
-> English entry point.
+<p>
+<a href="https://github.com/clezappdev-alt/pi-session-scrub/releases"><img src="https://img.shields.io/github/v/release/clezappdev-alt/pi-session-scrub?style=for-the-badge&labelColor=1A1218&color=F095C8" alt="Latest release"></a>
+<a href="https://github.com/clezappdev-alt/pi-session-scrub/actions/workflows/ci.yml"><img src="https://github.com/clezappdev-alt/pi-session-scrub/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<img src="https://img.shields.io/badge/node-%E2%89%A522.19.0-D7A0B8?style=for-the-badge&labelColor=1A1218" alt="Node 22.19.0 or newer">
+<a href="LICENSE"><img src="https://img.shields.io/badge/MIT-D7A0B8?style=for-the-badge&labelColor=1A1218" alt="License: MIT"></a>
+<img src="https://img.shields.io/badge/status-beta-F095C8?style=for-the-badge&labelColor=1A1218" alt="Status: beta">
+</p>
 
-**Status:** beta. The command surface is usable daily and still changes between
-minor versions. Install a tag, never `master`.
+<p>
+<a href="#install"><strong>Install</strong></a> &bull;
+<a href="#commands"><strong>Commands</strong></a> &bull;
+<a href="#what-it-touches"><strong>What it touches</strong></a> &bull;
+<a href="SECURITY.md"><strong>Security</strong></a> &bull;
+<a href="CONTRIBUTING.md"><strong>Contributing</strong></a>
+</p>
 
-**Requirements:** Pi `>=1.2.0`, Node.js `>=22.19.0`. The plugin has no runtime
-dependencies of its own — Pi already provides its libraries.
+<a href="https://github.com/Gentleman-Programming/gentle-ai">
+  <img width="220" src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />
+</a>
+
+</div>
+
+---
+
+## Why
+
+Pi keeps every session you ever ran. Some are finished work, some are experiments you
+abandoned in ten minutes, and `/resume` shows them as an undifferentiated wall of
+timestamps.
+
+The usual answer is a hook that injects a state script into every session — around 400
+tokens, on the first turn, forever. This plugin takes the opposite bet:
+
+- **Zero tokens by default.** No `before_agent_start` injection, ever.
+- **Opt-in only.** Commands run when you ask; closing a session asks nothing.
+- **Reversible.** Nothing is deleted. Closed sessions move to a plugin-owned trash
+  directory, with a byte-for-byte backup taken before any write, and come back with one
+  command.
+
+## Requirements
+
+| | |
+| :--- | :--- |
+| **Pi** | `>=1.2.0` |
+| **Node.js** | `>=22.19.0` (the floor in `engines`; the [security baseline](SECURITY.md#supported-runtime) is higher) |
+| **Runtime dependencies** | none — Pi already provides the libraries |
 
 ## Install
 
@@ -25,15 +58,79 @@ dependencies of its own — Pi already provides its libraries.
 pi install git:github.com/clezappdev-alt/pi-session-scrub@v0.6.1
 ```
 
-Then enable it in `pi config` and reload. To pin a different release, change the
-tag: a git ref is pinned, and `pi update --extensions` reconciles the checkout
-without moving the ref you selected.
+Then enable it in `pi config` and reload. Install a **tag**, never `master`: a git ref is
+pinned, and `pi update --extensions` reconciles the checkout without moving the ref you
+chose.
 
-To try it without installing anything, load the extension straight from a clone:
+To try it without installing anything:
 
 ```bash
-pi -e ./extensions/session-scrub/index.ts
+pi -e ./extensions/session-scrub/index.ts    # from a clone, then /reload
 ```
+
+## Commands
+
+Every one of them is explicit. None runs on its own.
+
+| Command | What it does |
+| :--- | :--- |
+| `/scrub:audit` | Read-only table of this project's sessions: which are live, named, kept, or actionable. Never mutates, never prompts |
+| `/scrub:apply [--dry-run]` | Move the actionable ones to the trash, one confirmation per session. Dry-run first. Non-TUI modes are always dry-run |
+| `/scrub:restore` | Move trashed sessions back. Never overwrites a file that reappeared in the meantime |
+| `/scrub:triage [--apply]` | Assisted triage: read-only digest packs, your judgment in chat, then verdicts written with per-item confirmation |
+| `/scrub:adopt [--apply]` | Give sessions from before the naming convention a state prefix. Never rewrites the text after it |
+| `/scrub:init` | Append the opt-in policy block to the project's `AGENTS.md`. Idempotent, and refuses if a block is already there |
+| `/scrub:handoff` | Create the continuation this session promised: a new session, named and seeded |
+| `scrub_mark` (tool) | Record a verdict on this session. Stored as a custom entry, never in the model's context |
+| `scrub_close` (tool) | Name this session in one glanceable line: `pausa`, `abierto`, `espera`, `hecho` |
+| naming hint | Once per unnamed session the status bar suggests a slug from your first message. It never renames anything by itself |
+
+## How a session is judged
+
+A verdict is evidence, and `scrub_mark` records it. What each one unlocks:
+
+| Verdict | Meaning | Trashable |
+| :--- | :--- | :--- |
+| `keep` | Work worth preserving | Never |
+| `paused` | Stopped, will continue | No |
+| `finished` | The work is done | Yes |
+| `ephemeral` | Ran one of the project's ephemeral flows | Yes |
+| `trash` | Explicitly condemned, even if named | Yes |
+
+Three rules hold regardless of the table:
+
+- **An unnamed session is never inferred trashable.** A session that is merely old is not
+  `pausa:`; it is old.
+- **The live session is never a target.** Name it with `scrub_close` instead.
+- **`traspaso:` has one writer.** Only `/scrub:handoff` writes it, and only after the
+  continuation exists.
+
+## What it touches
+
+| | Path | What |
+| :--- | :--- | :--- |
+| reads | `<pi-runtime>/sessions/--<project>--/*.jsonl` | session files: names, counts, first and last text, its own custom entries |
+| writes | the same files | one appended entry per name or verdict — never a rewrite |
+| writes | `<pi-runtime>/session-scrub-backups/--<project>--/` | a byte-for-byte copy taken immediately before each write |
+| writes | `<pi-runtime>/session-scrub-trash/--<project>--/` | sessions moved out of Pi's directory by `/scrub:apply` |
+| writes | `<project>/AGENTS.md` | only on `/scrub:init`, appending one delimited block |
+
+**No network. No `child_process`. No `eval`.** Moves are `rename`, so a restored session
+keeps its inode and mtime. Nothing is ever purged — and because the trash holds ordinary
+`.jsonl` files, you can always recover one by hand with `mv`. [`SECURITY.md`](SECURITY.md)
+has the full data map, the guards, and how to report a vulnerability privately.
+
+## Development
+
+```bash
+npm ci --ignore-scripts    # from the committed lockfile; dependency scripts never run
+npm run check              # strict typecheck, then the test suite
+pi -e ./extensions/session-scrub/index.ts   # iterate, then /reload
+```
+
+One command verifies everything, on the compatibility floor and the current LTS, with no
+globally installed toolchain. Setup, the fork flow and what a pull request must contain
+are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Support
 
@@ -41,167 +138,19 @@ pi -e ./extensions/session-scrub/index.ts
   A reproduction is what moves an issue fastest.
 - **Security problems:** privately, through
   [GitHub Security Advisories](https://github.com/clezappdev-alt/pi-session-scrub/security/advisories/new) —
-  never a public issue. [`SECURITY.md`](SECURITY.md) says what to include.
-- **Contributing:** [`CONTRIBUTING.md`](CONTRIBUTING.md) has the setup, the one
-  check command, and the fork flow.
+  never a public issue.
+- **Response:** best effort, no SLA. This is a personal project kept in the open.
 
-## License
+## Status and license
 
-MIT — see [`LICENSE`](LICENSE).
+> Anchored to the released tag `v0.6.1`.
 
-## Why
+**Beta.** The command surface is usable daily and still changes between minor versions;
+install a tag and read the [`CHANGELOG`](CHANGELOG.md) before updating.
 
-The old `session-hygiene` hook injected ~400 tokens on every first turn
-(state script + registry read + Door A/B question). This package does the
-opposite:
+MIT — see [`LICENSE`](LICENSE). The plugin is built with
+[Gentle-AI](https://github.com/Gentleman-Programming/gentle-ai).
 
-- **Zero tokens by default.** No `before_agent_start` injection, ever.
-- **Opt-in only.** Commands run on explicit user action; closing a session
-  never asks anything.
-- **Explicit and reversible.** Nothing is inferred trashable, nothing is
-  deleted permanently: closed sessions move to a plugin-owned trash dir
-  and can come back.
-
-## Commands
-
-- `/scrub:audit` — read-only audit of this project's sessions. Classifies each one
-  (`live`, `kept`, `named`, `candidate`, `auto-deletable`, `to review`).
-  Never mutates, never prompts.
-- `/scrub:apply [--dry-run]` — dry-run listing first, then per-item `confirm`
-  and move to trash. In non-TUI modes (`rpc`, `json`, `print`) it is always
-  dry-run: it never blocks waiting for input.
-- `/scrub:restore` — list trashed sessions for this project and move selected
-  ones back. Restoring does not clear verdicts: a restored `trash` candidate
-  shows up as a candidate again until re-marked.
-- `/scrub:init` — write the opt-in policy block into the project's `AGENTS.md`
-  (idempotent; see below).
-- `/scrub:triage [--apply]` — assisted triage of verdict-less sessions:
-  bounded digest packs first (read-only), your judgment in chat, then
-  `--apply` writes verdicts with per-item `confirm` (see below).
-- `/scrub:adopt [--apply] [id:estado …]` — apply the naming convention to
-  sessions that predate it (see below).
-- `/scrub:handoff` — create the continuation this session promised: a new
-  session, named and seeded with this session, the next step and the key of
-  the last memory written here. Use it after naming this session with the
-  pending step: `pausa:` is the honest state while the handoff is pending, and
-  the command itself writes the `traspaso:` once the new session exists.
-
-## Adoption
-
-`/scrub:adopt` adds a missing `state:` prefix to sessions written before
-the convention existed. **The human text after the prefix is never
-rewritten** — adoption supplies the prefix and keeps whatever you wrote. A
-session whose name already carries a prefix is left alone.
-
-A state is filled without asking only when a machine already asserted one:
-`paused` becomes `pausa:`, `finished` becomes `hecho:`. `keep`, `ephemeral`
-and `trash` derive nothing, and neither does a session that is merely old —
-an old session is not `pausa:`. Those are listed as needing a state, and you
-assign one inline in the same command:
-
-```
-/scrub:adopt                                  # dry-run, writes nothing
-/scrub:adopt --apply                          # only the machine-derivable
-/scrub:adopt --apply 01a1:pausa 01a2:espera   # plus the ones you decide
-```
-
-An abbreviated id matching more than one session is refused rather than
-resolved to whichever was listed first.
-
-Each write is backed up to `session-scrub-backups/` first and verified
-afterwards: the file must still parse, must have gained exactly one entry,
-and that entry must carry the name asked for. Backups are **not** the trash
-directory — restoring one would overwrite the file it was taken from.
-
-Sessions written within the last 2 minutes are confirmed individually, with
-the elapsed time, the risk of interleaving with Pi's own flush, and the
-backup location stated in the prompt. There is no flag to skip that; waiting
-is the only bypass. Your own live session is never a target — use
-`scrub_close` to name it.
-
-## Triage
-
-Hybrid judgment: the command produces digest packs (quoted data, never
-instructions), you judge in chat, then `--apply` writes your verdicts.
-
-Phase 1 (read-only) prints a compact table by default (one line per session:
-id, message count, age, name, grade → proposal), WEAK packs in full, and
-up to 20 slots ordered WEAK-first with machine-keeps filling the rest.
-`--verbose` prints full fenced `triage` packs for every slot (head = first
-user message ≤300 chars; tail = last messages in chronological order
-≤300 chars, front-truncated so the most recent text survives). Deferred
-candidates are listed by shortId on one line, `deferred (<N>): <ids>`.
-Empty and ephemeral-flow sessions are skipped with counts.
-
-Each pack carries a grade, never a decision:
-
-| Grade | Meaning |
-|-------|---------|
-| `machine` | Named session — presumed active, proposes `keep` |
-| `WEAK` | Heuristic guess (`finished` if older than 7 days, else `paused`) — judge from the words, never auto-confirm |
-
-Phase 2 (`/scrub:triage --apply <judgments>`) resolves each
-`<idPrefix>:<verdict>:"<reason>"` against a fresh scan (unknown or
-ambiguous prefixes rejected). WEAK verdicts ask per-item `confirm`;
-machine-keeps can be confirmed in bulk with ONE confirm storing a fixed
-dated rationale (`machine keep, bulk-confirmed <YYYY-MM-DD>`) in every
-file. Reasonless `id:keep` is accepted only for machine-keeps (resolved
-provenance); `finished`/`paused`/judged verdicts still require a reason.
-Renames are own-line assignments (`<idPrefix>:name:"<slug>"`, trim +
-non-empty). The same slug may name several sessions — `/name` allows
-duplicates of the visible name — while repeating an **id prefix** anywhere
-in one command, verdict or rename, is rejected as `duplicate assignment`.
-Each rename gets a per-item confirm showing existing → proposed, written via
-the same append-only entry `/name` uses so `/resume` reflects them with zero
-friction. Every write re-checks for
-a concurrent verdict right before appending. `trash` is never appliable
-from triage. Reasons support backslash escapes (`\"` and `\\`) so
-session text can be quoted verbatim. The summary breaks down the outcome
-(`applied` + `already`, `declined`, `conflict`, `error`, renames
-applied/declined/errored, with ids). Re-running after everything is
-triaged prints `Nothing to triage.`
-
-## Verdicts and the policy block
-
-A session is only trashable when the evidence says so: explicitly marked
-`trash`, finished work, an ephemeral skill flow, an empty session, or an old
-session you confirm with full context. An unnamed session is **never**
-inferred trashable; a named one only goes with an explicit `trash` verdict.
-
-Verdicts (`keep`, `paused`, `finished`, `ephemeral`, `trash`) are recorded with
-the `scrub_mark` tool and stored as custom entries inside the session file —
-they never pollute LLM context. `/scrub:init` writes a delimited policy block
-(`<!-- pi-session-scrub:start -->…end -->`) into the project's `AGENTS.md`
-telling the agent when to mark (rename, block pause, session close) and which
-skill flows count as ephemeral (`ephemeral-flows:`, filled per project).
-No block = conservative defaults (no agent marking, no ephemeral candidates).
-
-## Trash dir and recovery
-
-```
-~/.pi/agent/
-├── sessions/--<project>--/          # Pi's storage (never touched directly)
-└── session-scrub-trash/--<project>--/  # plugin-owned trash (atomic moves)
-```
-
-Recovery paths: `/scrub:restore`, or plain `mv` of the `.jsonl` file back at
-any time. There is no automatic purge and no OS-trash involved: what the
-plugin moves, the plugin (or you, with `mv`) can bring back.
-
-## Naming hint
-
-Once per unnamed session, the status bar suggests a deterministic slug from
-your first message (`suggested: /name <slug>`). You confirm with `/name`;
-the plugin never renames anything by itself.
-
-## Dev
-
-```bash
-npm ci --ignore-scripts      # once, from the lockfile
-npm run check                # typecheck + tests
-pi -e ./extensions/session-scrub/index.ts
-# then, inside Pi: /reload
-```
-
-The setup, the check command and the fork flow are documented in
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+Owner-facing guides, in Spanish: [`docs/guide.md`](docs/guide.md) (usage),
+[`docs/behavior.md`](docs/behavior.md) (as-built specification),
+[`docs/glossary.md`](docs/glossary.md) (vocabulary).
