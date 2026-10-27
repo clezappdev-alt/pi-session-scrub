@@ -5,7 +5,9 @@ opt-in commands only, and nothing deleted by surprise.
 
 <img src="https://img.shields.io/badge/status-beta-2F7A6F?style=flat-square" alt="Status: beta"> · `v0.6.1` · MIT · Node `>=22.19.0` · Pi `>=1.2.0`
 
-[Install](#install) · [Commands](#commands) · [Tools](#tools) · [Handoffs](#handoffs) ·
+[Install](#install) · [First ten minutes](#first-ten-minutes) ·
+[Working with the agent](#working-with-the-agent) · [Commands](#commands) ·
+[Tools](#tools) · [Handoffs](#handoffs) ·
 [How a session is judged](#how-a-session-is-judged) · [What it touches](#what-it-touches)
 
 ---
@@ -48,27 +50,124 @@ To try it without installing anything:
 pi -e ./extensions/session-scrub/index.ts    # from a clone, then /reload
 ```
 
+## First ten minutes
+
+No setup step is required. Install it, reload, and the plugin is already usable — the first
+few commands are a loop you can guess:
+
+```bash
+/scrub:audit                # what this project's /resume list holds, and how it reads
+/scrub:triage               # read the digest packs; judge the sessions that declare nothing
+/scrub:triage --apply 01a1:finished:"PR merged"   # write the verdicts you decided
+/scrub:apply --dry-run      # what would move — and nothing moves
+/scrub:apply                # move it, one confirmation per session
+```
+
+`/scrub:restore` undoes any of it. None of that is required, and none of it runs on its own:
+if you never type a command, the plugin never writes.
+
+Three rules worth knowing before the first `apply`:
+
+- **Your live session is never a target.** To name it, use `scrub_close` or `/name`.
+- **A named session is protected.** Only an explicit `trash` verdict makes it a candidate.
+- **An unnamed session is never inferred trashable.** Old is not `pausa:` — it is old.
+
+Two optional, once-per-project steps sit outside the loop:
+
+| Step | When it earns its place |
+| :--- | :--- |
+| `/scrub:adopt` | You have sessions from before the naming convention. Adds the state prefix, never rewrites the text |
+| `/scrub:init` | You want the agent to mark and close sessions **without being asked every time**. See [Working with the agent](#working-with-the-agent) |
+
+## Working with the agent
+
+The plugin injects nothing into the model's context, so the agent will not reach for its two
+tools unless something tells it to. Two things can: **you, in chat**, or **the project's
+policy block**, written once with `/scrub:init`.
+
+The split between what the agent can do and what only you can do is the host's shape, not a
+preference:
+
+| | Who can run it | Why |
+| :--- | :--- | :--- |
+| `scrub_mark`, `scrub_close` | the agent, inside the session | they are tools |
+| `/scrub:handoff` | **only you** | creating a session needs `ExtensionCommandContext`; a tool gets `ExtensionToolContext`, which cannot create one |
+| `/scrub:audit`, `/scrub:triage`, `/scrub:apply`, `/scrub:restore`, `/scrub:adopt`, `/scrub:init` | **only you** | they are slash commands |
+
+A handoff is therefore always two actors. **"Prepare the handoff" is a request to the agent;
+the handoff itself is your command.**
+
+### What to say
+
+| You say | The agent calls | What you get |
+| :--- | :--- | :--- |
+| "close this block as `pausa:` review the diff of `render.ts`" | `scrub_close` with `state:"pausa"` | the `/resume` line says where the work continues |
+| "mark this session finished" | `scrub_mark` with `verdict:"finished"` | a trash candidate, not an inference |
+| "that was an ephemeral flow, mark it" | `scrub_mark` with `verdict:"ephemeral"` | the same, with the reason recorded |
+| **"prepare the handoff"** | `scrub_close` with `state:"pausa"` and the next step, then tells you to run `/scrub:handoff` | the next step now lives in the session's name |
+| "let's triage" | nothing — you run `/scrub:triage` and read the packs together | verdicts you decided, written per item |
+
+### Three ordering traps
+
+1. **Do not `/name` before asking for a verdict.** `scrub_mark` refuses when the name already
+   declares a state — two records that disagree are worse than none — and points you at
+   `scrub_close`, which is the only writer of names.
+2. **Run `/scrub:handoff` with no argument when the agent already named the session.** It takes
+   the next step from the name; the argument is only the shortcut for a name that carries none.
+3. **The closing memory is the handoff's payload.** Only the last memory's topic key and title
+   travel — never the conversation. That is why `scrub_close` insists the title describe the
+   block's **state** (what is built, what is verified, what is next) and not the finding that
+   started it.
+
+### The policy block is a standing order, not configuration
+
+`/scrub:init` appends one delimited block to the project's `AGENTS.md`. Pi loads that file as
+project instructions, so the block reaches the model on **every** session of that project.
+That is what "zero tokens by default" leaves in your hands: the plugin injects nothing, and
+the file costs context because Pi loads it anyway.
+
+The plugin itself reads exactly **one** key from the block:
+
+| Key | Read by | Effect |
+| :--- | :--- | :--- |
+| `ephemeral-flows:` | the plugin | a `/skill:<flow>` mention makes that session `ephemeral` |
+| `verdicts:`, `mark-on:`, the `#` lines | the **agent** | when to mark, and with which verdict |
+
+Without the block the plugin falls back to no ephemeral flows, and the agent has no standing
+order. The command runs once: a second `/scrub:init` reports the block's line and writes
+nothing, so editing it afterwards is your job by hand.
+
 ## Commands
 
-Every one of them is explicit. None runs on its own.
+Every one of them is explicit. None runs on its own. The table is ordered by **when** you
+reach for a command, not by importance:
 
-| Command | What it does |
-| :--- | :--- |
-| `/scrub:audit` | Read-only table of this project's sessions: which are live, named, kept, or actionable. Never mutates, never prompts |
-| `/scrub:apply [--dry-run]` | Move the actionable ones to the trash, one confirmation per session. Dry-run first. Non-TUI modes are always dry-run |
-| `/scrub:restore` | Move trashed sessions back. Never overwrites a file that reappeared in the meantime |
-| `/scrub:triage [--apply]` | Assisted triage: read-only digest packs, your judgment in chat, then verdicts written with per-item confirmation |
-| `/scrub:adopt [--apply]` | Give sessions from before the naming convention a state prefix. Never rewrites the text after it |
-| `/scrub:init` | Append the opt-in policy block to the project's `AGENTS.md`. Idempotent, and refuses if a block is already there |
-| `/scrub:handoff` | Create the continuation this session promised — see [Handoffs](#handoffs) |
+| When | Command | What it does |
+| :--- | :--- | :--- |
+| **Once per project** | `/scrub:adopt [--apply]` | Give sessions from before the naming convention a state prefix. Never rewrites the text after it |
+| | `/scrub:init [--dry-run]` | Append the opt-in policy block to the project's `AGENTS.md`. Idempotent, and refuses if a block is already there |
+| **When the list has grown** | `/scrub:audit` | Read-only table of this project's sessions: which are live, named, kept, or actionable. Never mutates, never prompts |
+| | `/scrub:triage [--apply …]` | Assisted triage: read-only digest packs, your judgment in chat, then verdicts written with per-item confirmation |
+| | `/scrub:apply [--dry-run]` | Move the actionable ones to the trash, one confirmation per session |
+| **When you regret it** | `/scrub:restore` | Move trashed sessions back. Never overwrites a file that reappeared in the meantime |
+| **When a block closes** | `/scrub:handoff [next step]` | Create the continuation this session promised — see [Handoffs](#handoffs) |
+
+Two safety rules hold on every write path, and neither is a convenience you can skip:
+
+- **Non-TUI is always dry-run.** Under `--mode rpc`, `print` or `json` nobody can answer a
+  confirmation, so `/scrub:apply`, `/scrub:triage --apply`, `/scrub:restore`, `/scrub:init`
+  and `/scrub:adopt` all stop before writing. There is no flag to bypass it.
+- **`--dry-run` before the real thing.** `/scrub:apply`, `/scrub:triage` and `/scrub:init`
+  accept it; `/scrub:adopt` is dry-run until you pass `--apply`.
 
 A naming hint runs alongside: once per unnamed session, the status bar suggests a slug
-from your first message. It never renames anything by itself.
+from your first message (`suggested: /name <slug>`). It never renames anything by itself.
 
 ## Tools
 
-Two tools, for the agent to use when you ask it to judge or close a session. Both write
-through Pi's own session API, so the `/resume` picker and the file update together.
+Two tools, for the agent to use when you ask it to judge or close a session — see
+[Working with the agent](#working-with-the-agent) for the phrases that trigger them. Both
+write through Pi's own session API, so the `/resume` picker and the file update together.
 
 | Tool | What it does |
 | :--- | :--- |
@@ -120,6 +219,11 @@ you to reconstruct the thread tomorrow:
 
 The next step comes from the argument, or from this session's name. **No next step, no
 session** — it refuses and creates nothing.
+
+Two actors, two steps: **you ask the agent to prepare it**, the agent names this session
+`pausa: <next step>` with `scrub_close`, and **then you run `/scrub:handoff`** — with no
+argument, because the name now carries the step. It cannot be a tool: creating a session
+needs the command context.
 
 What it does, and the order is the guarantee:
 
