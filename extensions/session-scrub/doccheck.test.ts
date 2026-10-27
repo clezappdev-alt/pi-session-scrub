@@ -19,6 +19,8 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { POLICY_TEMPLATE, planInitUpdate } from "./policy.ts";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..");
 const INDEX_TS = readFileSync(join(HERE, "index.ts"), "utf8");
@@ -307,6 +309,51 @@ test("UD-02: /scrub:init --update writes through replacePolicyBlock, behind the 
     backedUp < wrote,
     "the backup must be taken before the write, or it holds the new bytes",
   );
+});
+
+// --- R3: this repo's own policy block is a hand-maintained copy --------------
+//
+// The precedence table lives in two places: `POLICY_TEMPLATE` in `policy.ts` and
+// this repo's own `AGENTS.md`. The agreement tests parse the template, so nothing
+// asserted the copy — and a copy nothing checks is exactly how the live block went
+// stale on 2026-10-27 (fixed by hand, which is what made `/scrub:init --update`
+// worth building).
+//
+// The assertion reuses the shipped planner instead of re-implementing the
+// comparison: "the block is current" is the same question `--update` answers, and a
+// second definition here could disagree with the command that would fix the drift.
+
+const AGENTS_MD = readFileSync(join(REPO_ROOT, "AGENTS.md"), "utf8");
+
+test("R3: this repo's own policy block is what /scrub:init --update would leave", () => {
+  const plan = planInitUpdate(AGENTS_MD);
+  assert.equal(
+    plan.kind,
+    "current",
+    `AGENTS.md drifted from POLICY_TEMPLATE (planner says "${plan.kind}"). ` +
+      "Run `/scrub:init --update` in this repo and commit the result.",
+  );
+});
+
+test("R3: the gate bites — a drifted block is not reported as current", () => {
+  // A guard nobody has seen fail is not a guard. This half proves the assertion
+  // above is load-bearing: without it, a planner weakened to always answer
+  // "current" would leave the first test green forever.
+  //
+  // The fixture drifts the TEMPLATE generically — one guidance line gets a suffix —
+  // rather than reverting a sentence of `AGENTS.md`. Naming a sentence would make
+  // this test break the day that sentence is legitimately reworded by a future
+  // `--update`, and it would then be "fixed" by editing the test instead of reading
+  // the failure.
+  const lines = POLICY_TEMPLATE.split("\n");
+  const index = lines.findIndex((line) => line.startsWith("# ") && line.length > 4);
+  assert.notEqual(index, -1, "the template must still carry guidance lines to drift");
+  const drifted = [
+    ...lines.slice(0, index),
+    `${lines[index]} (drifted)`,
+    ...lines.slice(index + 1),
+  ].join("\n");
+  assert.equal(planInitUpdate(drifted).kind, "update", "a drifted block must not read as current");
 });
 
 // --- Glossary citations ------------------------------------------------------
