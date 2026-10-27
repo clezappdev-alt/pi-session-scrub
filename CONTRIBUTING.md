@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for looking. This is a small plugin with a narrow purpose: keep the Pi
+Thanks for looking. This is a small extension with a narrow purpose: keep the Pi
 `/resume` list clean and descriptive, with zero ceremony and zero tokens by
 default. Contributions are welcome through issues and pull requests from forks.
 
@@ -13,7 +13,7 @@ moves it fastest.
 - **Node.js `>=22.19.0`** — the same floor `package.json` declares in `engines`.
 - **npm**, which ships with Node. Nothing else needs to be installed.
 
-The plugin itself has **zero runtime dependencies**: it runs inside Pi, which
+The extension itself has **zero runtime dependencies**: it runs inside Pi, which
 already provides its libraries. Everything in `devDependencies` exists to
 typecheck and test this repository.
 

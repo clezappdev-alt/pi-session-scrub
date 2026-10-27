@@ -133,7 +133,7 @@ export function samePath(a: string, b: string): boolean {
  * NM-05: count conversation turns — messages whose role is `user` or `assistant`.
  *
  * Takes `readonly unknown[]` and narrows internally rather than importing Pi's entry
- * type: the on-disk entry shape is Pi's, but the plugin only needs two fields, and
+ * type: the on-disk entry shape is Pi's, but the extension only needs two fields, and
  * narrowing keeps this module free of any runtime dependency on the host.
  *
  * Entries that do not match are skipped, never thrown on: a session file may contain a

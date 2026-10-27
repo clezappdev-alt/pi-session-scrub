@@ -29,7 +29,7 @@ restating it. The version anchor above is pinned by `doccheck.test.ts` against
 Seven commands, two tools and two hooks are registered by the factory
 (`index.ts` default export). Nothing else is registered, and no
 `session_start` / `session_shutdown` lifecycle handler exists — the absence is
-deliberate (silent close, REQ-12), so nothing in the plugin runs without a command
+deliberate (silent close, REQ-12), so nothing in the extension runs without a command
 invocation, a tool call, or an agent start/end event, and closing a session never
 prompts.
 
@@ -95,7 +95,7 @@ On `/scrub:triage` and `/scrub:adopt` a bypass-shaped token is refused by name
 - Backup dir: `sessionfs.ts:getBackupDir` — same arithmetic with root
   `session-scrub-backups`, deliberately a sibling of the trash dir and never a
   directory inside it (a backup inside trash would be offered for restore).
-- The only file the plugin writes outside trash, backups and session files is
+- The only file the extension writes outside trash, backups and session files is
   `<ctx.cwd>/AGENTS.md`, through `sessionfs.ts:appendPolicyBlock` on a first run and
   `sessionfs.ts:replacePolicyBlock` on `--update` (`index.ts:handleScrubInit` plans
   both). An update copies the file into the backups root first
@@ -137,7 +137,7 @@ both must be present in that order — otherwise the block is absent and the
 conservative default applies (PB-01). Markers inside a fenced code block — three
 or more backticks, or three or more tildes — or quoted as an inline code span are
 quoted text, never markers and never keys, so a template pasted as an example in a
-project's own docs cannot become policy (PB-02). The plugin reads exactly one key:
+project's own docs cannot become policy (PB-02). The extension reads exactly one key:
 `ephemeral-flows:` — comma-separated exact skill-flow names; blank, `#`-comment,
 placeholder (`<…>`) and unknown lines are skipped. The `verdicts:` and `mark-on:`
 lines in the template are agent guidance, parsed by nothing. That guidance carries
@@ -164,7 +164,7 @@ rule the template states nowhere else — it lives in `policy.ts:planInitUpdate`
 | anything else non-blank | nobody identified | **refused** by line number, nothing written |
 
 A second `ephemeral-flows:` line is refused the same way the parser unions it: two
-lines of the human's data are not the plugin's to collapse. `--update` therefore
+lines of the human's data are not the extension's to collapse. `--update` therefore
 cannot silently delete a line a project added between the markers — the refusal
 names it and says where to move it.
 
@@ -469,7 +469,7 @@ that is built from it). `traspaso` is deliberately absent: it asserts a continua
 in another session, and only `/scrub:handoff` can know that, because only the handoff
 creates it (NB-04) — while a handoff is pending, the honest word is `pausa:`. `/name`
 and `/scrub:adopt` still write `traspaso:`: a human's intention and a migration of the
-past, never the plugin asserting an outcome. Writes the name with the same call
+past, never the extension asserting an outcome. Writes the name with the same call
 `/name` makes (`pi.setSessionName`), so memory and disk update together. Failure reports
 `Could not set the session name: <message>`. Success reports
 `Session name set: <name>`. The name is composed by `name.ts:closeName`, which
@@ -487,7 +487,7 @@ title states the block's state. Annotations: `readOnlyHint: false`,
 
 ### The rendered lines — one line, inside the frame
 
-`render.ts` owns every line this plugin hands to Pi's TUI: the two tool call previews
+`render.ts` owns every line this extension hands to Pi's TUI: the two tool call previews
 (`render.ts:renderMarkCall`, `renderCloseCall`) and the tool result line
 (`renderToolResultLine`). All three obey one contract: the visible width, measured in **cells**
 under a conservative rule (combining marks 0, ASCII 1, everything else 2), never exceeds the
@@ -594,7 +594,7 @@ protected throwaway sessions (`openspec/specs/session-scrub/spec.md:788`).
 record in `odd/tasks/live-measurement-fixture.md` L4–L5). Nine populations
 produced headless and verified; the owner then ran `/scrub:audit` and
 `/scrub:triage` live. Result: seven of nine populations behaved as the bench
-documented; two of the bench's own expectations were wrong and the plugin was
+documented; two of the bench's own expectations were wrong and the extension was
 right — a fresh unnamed 2-turn session with content is
 `kept has-content-no-verdict` (candidacy requires a signal: `trash`, `finished`,
 ephemeral, empty, or ≥ 7 days), pinned by `classify.test.ts`. Observed: all eight
@@ -650,15 +650,15 @@ removed.
 2. `SessionManager.list(ctx.cwd)` filtering, sorting and live-session inclusion
    semantics — Pi-internal; the code synthesizes the live row when absent, which
    implies the API may or may not include it.
-3. The `.jsonl` session filename convention, beyond the plugin's own
+3. The `.jsonl` session filename convention, beyond the extension's own
    `f.endsWith(".jsonl")` filter.
 4. How Pi persists a session name and the on-disk encoding `appendSessionInfo`
-   produces — the plugin writes through the API and never inspects the encoding.
+   produces — the extension writes through the API and never inspects the encoding.
 5. That custom entries are excluded from LLM context — the design assumes it
    ("zero tokens by default") and never relies on it in code, but the guarantee
    belongs to Pi.
 6. The runtime behavior of `ctx.ui.notify`, `ctx.ui.confirm` and `ctx.ui.setStatus`
-   beyond how this plugin calls them (e.g. which non-TUI `mode` strings exist).
+   beyond how this extension calls them (e.g. which non-TUI `mode` strings exist).
 7. The negative claims (no `unlink`/`rm`/`spawnSync`/OS-trash call) are verified
    for this source tree by grep, as source text — not a runtime guarantee.
 8. The 2026-10-07 population sweep — reported, not re-measured here.
@@ -702,7 +702,7 @@ Slices 1–4 lists all still apply, in sequence.
 1. **T1 clean boot:** `pi -e ./extensions/session-scrub/index.ts` starts with no errors; `/reload` succeeds.
 2. **T2 audit truth:** seed named/unnamed/empty/old sessions; `/scrub` classifications match REQ-01; counts reconcile with `/resume` (live shown as live).
 3. **T3 dry-run:** `/scrub:apply --dry-run` lists exactly the actionable set with detail; filesystem file-set identical, no trash dir created.
-4. **T4 apply:** TUI per-item confirm 1–2 candidates → files appear in the plugin trash sibling dir; re-list count drops accordingly.
+4. **T4 apply:** TUI per-item confirm 1–2 candidates → files appear in the extension's trash sibling dir; re-list count drops accordingly.
 5. **T5 restore:** `/scrub:restore` lists trashed; confirm one → file returns to sessions dir with verdict preserved; `/scrub` shows it again; trash empty.
 6. **T6 EXDEV honesty:** by inspection + throwing rename path — per-file error notified; source intact; no fallback copy/unlink (no destructive path exists in code).
 7. **T7 non-TUI:** `pi --print` (and `--json`) `/scrub:apply` and `/scrub:restore` complete with notify-only output, exit 0; no hang.

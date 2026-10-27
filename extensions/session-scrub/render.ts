@@ -9,7 +9,7 @@
 export interface RenderedLine {
   render(width: number): string[];
   // pi-tui's Component declares `invalidate(): void` as REQUIRED — in 1.2.0, the runtime this
-  // plugin targets, and in the 1.3.0 types the typecheck gate resolves — so the object handed
+  // extension targets, and in the 1.3.0 types the typecheck gate resolves — so the object handed
   // to renderCall/renderResult must carry it or the gate fails.
   // Static one-line output caches nothing, so the implementation supplies a no-op.
   invalidate(): void;

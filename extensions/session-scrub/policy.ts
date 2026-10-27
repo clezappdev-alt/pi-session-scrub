@@ -18,7 +18,7 @@ export const POLICY_END = "<!-- pi-session-scrub:end -->";
 
 export const POLICY_TEMPLATE = `<!-- pi-session-scrub:start -->
 # session-scrub policy — project-local, opt-in, one block per project.
-# Everything here but one key is written for the AGENT, not for the plugin:
+# Everything here but one key is written for the AGENT, not for the extension:
 # it is the standing order for when to use scrub_mark and scrub_close.
 #
 # VERDICTS (record via the scrub_mark tool, with an optional reason):
@@ -42,7 +42,7 @@ export const POLICY_TEMPLATE = `<!-- pi-session-scrub:start -->
 #   abierto         -> keep
 #   hecho, traspaso -> finished
 #
-# EPHEMERAL FLOWS — the only key the plugin itself reads. Exact skill-flow
+# EPHEMERAL FLOWS — the only key the extension itself reads. Exact skill-flow
 # names as invoked (the name after /skill:), comma-separated. ONLY these
 # flows ever qualify a session as ephemeral. Leave the placeholders if none.
 verdicts: keep | paused | finished | ephemeral | trash
@@ -212,7 +212,7 @@ function appendText(existing: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * The one key the plugin reads, and therefore the one line inside the block that
+ * The one key the extension reads, and therefore the one line inside the block that
  * belongs to the human: its value is project data, never template text.
  */
 const HUMAN_KEY = "ephemeral-flows:";
@@ -242,8 +242,8 @@ function regionWithFlows(flows: string | undefined): string {
  *   - blank lines and `#` comments are the template's prose — rewritten;
  *   - `verdicts:` and `mark-on:` are guidance the template owns — rewritten;
  *   - `ephemeral-flows:` is the human's data — its VALUE survives verbatim;
- *   - any other non-blank line belongs to nobody the plugin can identify, so the
- *     update REFUSES and names it. Deleting a line the plugin does not recognize
+ *   - any other non-blank line belongs to nobody the extension can identify, so the
+ *     update REFUSES and names it. Deleting a line the extension does not recognize
  *     because it was caught inside two markers is how a project loses its notes.
  *
  * A second `ephemeral-flows:` line is refused for the same reason: the parser

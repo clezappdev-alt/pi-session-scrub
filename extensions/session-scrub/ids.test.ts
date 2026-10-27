@@ -3,7 +3,7 @@
 // The ids in the collision cases are the real ones from a burst of model smoke tests that
 // all ran inside five and a half minutes. They are used verbatim because the shape is the
 // point: uuid v7 puts a millisecond timestamp in the first twelve hex characters, so a
-// burst agrees well past the eight the plugin used to show.
+// burst agrees well past the eight the extension used to show.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

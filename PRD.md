@@ -20,7 +20,7 @@ document presents the PROBLEM and the context — nothing else. The SOLUTION
 
 ## Target platform
 
-Pi Agent (`@earendil-works/pi-coding-agent`): the plugin runs inside Pi as a
+Pi Agent (`@earendil-works/pi-coding-agent`): the extension runs inside Pi as a
 TypeScript extension. Everything Pi loads — extensions, host APIs, UI toolkit
 — is TypeScript executed via jiti (no compilation step).
 

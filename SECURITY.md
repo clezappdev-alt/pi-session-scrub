@@ -7,7 +7,7 @@ Advisories, privately:
 
 <https://github.com/clezappdev-alt/pi-session-scrub/security/advisories/new>
 
-Include what you did, what happened, and the plugin version. If the report is
+Include what you did, what happened, and the version you are running. If the report is
 about data on disk, say which files were involved and what a copy of them would
 reveal.
 
@@ -16,7 +16,7 @@ fix or publish a mitigation within **30**.
 
 ## Supported runtime
 
-The security baseline for running this plugin is **Node.js `>=24.22.1` on the
+The security baseline for running this extension is **Node.js `>=24.22.1` on the
 24.x LTS line** — a maintained, patched runtime. That number belongs to whoever
 maintains the runtime on your machine, not to this repository; it is restated
 here so it is stated somewhere a user will look.
@@ -25,7 +25,7 @@ here so it is stated somewhere a user will look.
 security control: it is what the code needs, and it deliberately is not raised
 to the baseline, because a range in a manifest does not patch anything.
 
-An unpatched runtime is a real exposure that this plugin cannot fix: it lives in
+An unpatched runtime is a real exposure that pi-session-scrub cannot fix: it lives in
 Node, and every Pi user carries it with or without this package.
 
 ## Affected versions
@@ -34,25 +34,25 @@ Every release before the one that carries a fix. Fixes ship as a patch tag, and
 the release notes state which versions are affected. There are no long-term
 support branches: install the newest tag.
 
-## What this plugin touches
+## What this extension touches
 
 It reads and writes Pi session files, which is the whole reason it exists. The
 data map:
 
 | | Path | What |
 | --- | --- | --- |
-| reads | `<pi-runtime>/sessions/--<project>--/*.jsonl` | session files: message counts, first/last text, names, and the plugin's own custom entries |
+| reads | `<pi-runtime>/sessions/--<project>--/*.jsonl` | session files: message counts, first/last text, names, and the extension's own custom entries |
 | reads | `<project>/AGENTS.md` | only to detect whether the policy block already exists |
 | writes | the same session files | appends one entry: a `session_info` name, or a `session-scrub/verdict` custom entry |
-| writes | `<pi-runtime>/session-scrub-backups/--<project>--/<file>.jsonl` | a byte-for-byte copy of a session file, taken immediately before the plugin writes to it. One backup per target, overwritten on each write |
+| writes | `<pi-runtime>/session-scrub-backups/--<project>--/<file>.jsonl` | a byte-for-byte copy of a session file, taken immediately before the extension writes to it. One backup per target, overwritten on each write |
 | writes | `<pi-runtime>/session-scrub-trash/--<project>--/<file>.jsonl` | sessions moved out of Pi's sessions directory by `/scrub:apply`; moves are `rename`, and `/scrub:restore` moves them back |
 | writes | `<project>/AGENTS.md` | only on `/scrub:init`: appends one delimited block. Never rewrites existing text |
 
 `<pi-runtime>` is the directory Pi itself reports for its state (typically
-`~/.pi/agent`). Nothing outside those paths is read or written, and the plugin
+`~/.pi/agent`). Nothing outside those paths is read or written, and the extension
 never touches the session it is running in.
 
-**No network. No `child_process`. No `eval`.** The plugin is offline by design
+**No network. No `child_process`. No `eval`.** The extension is offline by design
 and has no runtime dependencies. All three claims are verifiable with one grep
 over `extensions/`:
 
@@ -76,7 +76,7 @@ grep -rnE -e 'node:net' -e 'node:http' -e 'node:dns' -e 'node:tls' \
   that cannot be verified is reported with the backup path, never counted as
   applied.
 - The trash and backup roots are siblings of Pi's `sessions/` directory, never
-  inside it, so Pi can never mistake a plugin file for a live session.
+  inside it, so Pi can never mistake its own file for a live session.
 
 Each guard above has a test in `extensions/session-scrub/*.test.ts`; a security
 guard without a test is a comment.

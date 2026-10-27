@@ -1,6 +1,6 @@
 # pi-session-scrub — guía de uso
 
-Qué es este plugin, qué comandos tiene, qué tools expone, cómo se trabaja con él en una
+Qué es esta extensión, qué comandos tiene, qué tools expone, cómo se trabaja con él en una
 sesión de proyecto y —en detalle— qué hace `/scrub:handoff` y por qué conviene usarlo.
 
 > Esta guía describe el código en **HEAD**: lo que hay en `master`, que puede ir un paso
@@ -15,7 +15,7 @@ sesión de proyecto y —en detalle— qué hace `/scrub:handoff` y por qué con
 ## 1. Objetivo
 
 Tu lista de `/resume` se pudre: sesiones sin nombre apiladas, trabajo terminado
-indistinguible de trabajo abierto, y cada semana encontrar algo cuesta más. El plugin
+indistinguible de trabajo abierto, y cada semana encontrar algo cuesta más. La extensión
 ataca eso con tres reglas que no se rompen:
 
 | Regla | Qué significa en la práctica |
@@ -31,7 +31,7 @@ No es un gestor de sesiones: no archiva, no resume, no borra. Es la capa que hac
 
 ## 2. Tres canales, un solo criterio
 
-El plugin escribe en tres lugares distintos y conviene no confundirlos.
+La extensión escribe en tres lugares distintos y conviene no confundirlos.
 
 ### 2.1 El nombre de la sesión (lo que leés en `/resume`)
 
@@ -52,7 +52,7 @@ Detalles que importan:
 
 - Sólo cuenta un prefijo **al principio** y seguido de dos puntos. `reabierto:` no es
   `abierto:`, y un prefijo desconocido queda como texto libre.
-- El texto después del prefijo es tuyo: el plugin no lo reescribe.
+- El texto después del prefijo es tuyo: la extensión no lo reescribe.
 - Los estados son **mutuamente excluyentes**. Si el texto contradice al estado (`pausa:`
   con un texto que dice que el trabajo se va a otro lado), elegí el estado que
   corresponde: el estado es la promesa, el texto es el detalle.
@@ -81,7 +81,7 @@ Dos cosas no obvias:
 
 ```
 ~/.pi/agent/sessions/--<proyecto>--/            ← las sesiones (Pi)
-~/.pi/agent/session-scrub-trash/--<proyecto>--/ ← la basura del plugin
+~/.pi/agent/session-scrub-trash/--<proyecto>--/ ← la basura de la extensión
 ~/.pi/agent/session-scrub-backups/--<proyecto>--/ ← backups de escrituras sobre otras sesiones
 ```
 
@@ -146,7 +146,7 @@ que cambian), pide confirmación y copia `AGENTS.md` a `session-scrub-backups` a
 escribir. Tus flujos de `ephemeral-flows:` sobreviven siempre, porque son datos tuyos y no de
 la plantilla; si dentro de los marcadores hay una línea que la plantilla no reconoce, el
 comando se niega y te dice cuál — movela afuera de los marcadores y volvé a correr. Sin
-bloque, el plugin usa defaults conservadores: no infiere flujos efímeros.
+bloque, la extensión usa defaults conservadores: no infiere flujos efímeros.
 
 El agente lee ese bloque como orden permanente, y una de sus reglas depende del nombre. Al
 renombrar con `/name` se marca `keep`, pero **sólo si el nombre nuevo no declara estado**. Si
@@ -218,9 +218,9 @@ línea mirable. Y si el estado contradice al texto, gana el estado que escribas.
 
 Un ciclo, de apertura a cierre, sin ceremonia:
 
-1. **Apertura.** El plugin no inyecta nada. Si la sesión no tiene nombre, una vez aparece
+1. **Apertura.** La extensión no inyecta nada. Si la sesión no tiene nombre, una vez aparece
    en la barra de estado una sugerencia determinística derivada de tu primer mensaje
-   (`suggested: /name <slug>`). Vos decidís si la usás: el plugin nunca renombra solo.
+   (`suggested: /name <slug>`). Vos decidís si la usás: la extensión nunca renombra sola.
 2. **Trabajo.** Nada corre por defecto. Si el agente necesita declarar algo (pausa,
    bloqueo, fin de bloque), usa `scrub_close`; vos podés hacer lo mismo con `/name`
    usando los mismos prefijos.
@@ -250,7 +250,7 @@ nombre no declara estado) la vuelve candidata.
 
 Nombrar protege, y eso incluye `hecho:` y `traspaso:`. Una sesión con prefijo de estado
 **no** aparece como candidata en `/scrub:audit`, y `scrub_mark` se niega a escribir
-veredictos sobre ella (§2.2): el nombre es la promesa y el plugin no la deshace por su
+veredictos sobre ella (§2.2): el nombre es la promesa y la extensión no la deshace por su
 cuenta. Consecuencia práctica: la limpieza alcanza a sesiones sin nombre (o con nombre
 sin prefijo); una sesión nombrada que quieras sacar de la lista se archiva a mano con
 `mv`, no con `/scrub:apply`.
@@ -264,7 +264,7 @@ continuación es peor que no tener nombre, porque se confía en él: `/resume` t
 sesión que nunca existió. Por eso el anuncio no lo escribe nadie de antemano:
 `/scrub:handoff` crea la sesión real y **después** escribe el `traspaso:`. (El comando se
 escribe con dos puntos, `/scrub:handoff`; `scrub:handoff` es el espacio de nombres que
-registra el plugin.)
+registra la extensión.)
 
 ### 6.1 Qué hace, paso a paso
 
@@ -472,5 +472,5 @@ próxima sesión concreta, no lo corras.
 | [`../README.md`](../README.md) | Instalación, primer arranque y comandos por momento. |
 | [`behavior.md`](behavior.md) | Especificación as-built en tres capas, anclada al último release, citada por símbolo. |
 | [`glossary.md`](glossary.md) | Vocabulario compartido, un término por línea, con su lugar en el código. |
-| [`../PRD.md`](../PRD.md) | El problema que el plugin existe para resolver. |
+| [`../PRD.md`](../PRD.md) | El problema que la extensión existe para resolver. |
 | [`../openspec/changes/archive/2026-10-26-session-scrub-naming/`](../openspec/changes/archive/2026-10-26-session-scrub-naming/) | El change, ya archivado, que introdujo la convención, `scrub_close` y `/scrub:handoff`. |

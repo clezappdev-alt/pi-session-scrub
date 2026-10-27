@@ -1,7 +1,7 @@
 // pi-session-scrub — slice 1 implementation (SDD change session-scrub-cleanup).
 //
 // Rules: zero tokens by default (opt-in commands only, no before_agent_start
-// injection), explicit + reversible destruction (plugin-owned trash dir, never
+// injection), explicit + reversible destruction (extension-owned trash dir, never
 // destructive deletion), live session never touched, silent close (no shutdown handler
 // handler registered — the absence is intentional, spec T9).
 
@@ -530,7 +530,7 @@ async function appendPlannedPolicyBlock(
     return;
   }
   // A failed write is notified, never thrown (PB-04): every other error path
-  // in this plugin notifies, and zero mutation must stay observable.
+  // in this extension notifies, and zero mutation must stay observable.
   try {
     appendPolicyBlock(agentsPath, existing, text);
   } catch (err) {
@@ -1318,7 +1318,7 @@ async function appendVerdictToOther(
   }
   // The whole check-then-write runs inside the host's file mutation queue for this path:
   // the guards below are only worth anything if nothing can slip between them and the
-  // append, and this is the plugin's own read-modify-write on a file it does not own.
+  // append, and this is the extension's own read-modify-write on a file it does not own.
   await withFileMutationQueue(sessionPath, async () => {
     // Defense in depth: resolve ran before the human confirm, so re-assert
     // liveness here — never write into a gone file or the live session.
@@ -1891,7 +1891,7 @@ async function handleScrubAdopt(args: string, ctx: ExtensionCommandContext): Pro
   const abbrevs = uniqueAbbreviations(all.map((c) => c.id));
 
   // The live session is never a target here: NM-03 refuses it outright, and naming it
-  // through the plugin's own tool is what `scrub_close` is for. It is reported, not
+  // through the extension's own tool is what `scrub_close` is for. It is reported, not
   // silently dropped, so the count of "nothing adopted" is never a surprise.
   const live = livePath === undefined ? [] : all.filter((c) => samePath(c.path, livePath));
   const candidates = all.filter((c) => !live.some((l) => samePath(l.path, c.path)));

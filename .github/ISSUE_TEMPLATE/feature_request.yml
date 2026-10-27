@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Describe the problem and the context, not the solution. The design of this
-        plugin is deliberate — zero tokens by default, opt-in commands only,
+        extension is deliberate — zero tokens by default, opt-in commands only,
         reversible moves — and a demanded solution usually skips that reasoning.
         A well-described problem is what makes a design conversation possible.
 
@@ -14,7 +14,7 @@ body:
     id: problem
     attributes:
       label: The problem
-      description: What are you trying to do, and where does the plugin get in the way?
+      description: What are you trying to do, and where does the extension get in the way?
     validations:
       required: true
 

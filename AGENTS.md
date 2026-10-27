@@ -1,6 +1,6 @@
 # pi-session-scrub — AGENTS.md
 
-Micro-plugin for Pi. Keeps the `/resume` list clean and descriptive
+Micro-extension for Pi. Keeps the `/resume` list clean and descriptive
 with **zero ceremony and zero tokens by default**.
 
 Authoritative plugin knowledge is the global skill `pi-plugin-dev`, distilled from
@@ -88,7 +88,7 @@ a local database.
 
 <!-- pi-session-scrub:start -->
 # session-scrub policy — project-local, opt-in, one block per project.
-# Everything here but one key is written for the AGENT, not for the plugin:
+# Everything here but one key is written for the AGENT, not for the extension:
 # it is the standing order for when to use scrub_mark and scrub_close.
 #
 # VERDICTS (record via the scrub_mark tool, with an optional reason):
@@ -112,7 +112,7 @@ a local database.
 #   abierto         -> keep
 #   hecho, traspaso -> finished
 #
-# EPHEMERAL FLOWS — the only key the plugin itself reads. Exact skill-flow
+# EPHEMERAL FLOWS — the only key the extension itself reads. Exact skill-flow
 # names as invoked (the name after /skill:), comma-separated. ONLY these
 # flows ever qualify a session as ephemeral. Leave the placeholders if none.
 verdicts: keep | paused | finished | ephemeral | trash

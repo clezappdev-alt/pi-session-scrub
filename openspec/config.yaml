@@ -1,5 +1,5 @@
 project: session-scrub
-type: pi-plugin
+type: pi-package
 problem_input: PRD.md
 working_contract: AGENTS.md
 

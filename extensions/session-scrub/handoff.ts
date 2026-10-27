@@ -4,7 +4,7 @@
 // commands. `setup` receives a *mutable* SessionManager — not the read-only one on ctx —
 // so the destination can be seeded and named at creation.
 //
-// How the memory key is obtained without the plugin ever calling Engram: it does not
+// How the memory key is obtained without the extension ever calling Engram: it does not
 // call it, it observes. `tool_call` carries toolName and input; `tool_result` carries
 // structuredContent with what the tool created. The rule is deliberately blunt:
 //
@@ -84,7 +84,7 @@ export function extractMemoryRef(
  * Pull the created observation id out of a tool result.
  *
  * The id is never in the call arguments — it only exists once the tool has run, in
- * `structuredContent`. Engram's exact shape is not something this plugin should depend
+ * `structuredContent`. Engram's exact shape is not something this extension should depend
  * on, so the two plausible containers are tried and anything non-numeric is rejected:
  * rendering "id NaN" into the handoff message would hand the agent a pointer that looks
  * real and is not.

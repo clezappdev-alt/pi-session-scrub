@@ -3,7 +3,7 @@
 // One question partitions the states: where does what comes next live? The test is
 // that no two states can hold at once — if they could, the boundary is wrong.
 //
-// The name is the single carrier on purpose. The plugin derives the verdict from the
+// The name is the single carrier on purpose. The extension derives the verdict from the
 // prefix rather than keeping a second copy, because two writers diverge the moment one
 // write is skipped, and a stale promise in /resume is worse than no name at all.
 
@@ -416,7 +416,7 @@ test("the close budget still applies to the text, never to the two-token head", 
 });
 
 // ---------------------------------------------------------------------------
-// CLOSE_STATES — the states the plugin may write on its own initiative (NB-03)
+// CLOSE_STATES — the states the extension may write on its own initiative (NB-03)
 // ---------------------------------------------------------------------------
 
 test("the close states are every state whose meaning is a fact about this session", () => {

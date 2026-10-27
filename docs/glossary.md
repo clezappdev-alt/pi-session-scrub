@@ -20,7 +20,7 @@ proyecto.
 
 | | Qué es | Valores | Dónde |
 | --- | --- | --- | --- |
-| **veredicto** | Lo que el plugin **escribe** como entry en el archivo de sesión. Decide si la sesión se protege, se ofrece o se tira. | `keep`, `paused`, `finished`, `ephemeral`, `trash` | `classify.ts:32` |
+| **veredicto** | Lo que la extensión **escribe** como entry en el archivo de sesión. Decide si la sesión se protege, se ofrece o se tira. | `keep`, `paused`, `finished`, `ephemeral`, `trash` | `classify.ts:32` |
 | **estado** | El **prefijo del nombre** de la sesión, en la convención de `scrub_close`. Es lo que el humano lee en `/resume`. | `pausa`, `abierto`, `espera`, `traspaso`, `hecho` | `name.ts:28` |
 
 **Falsos amigos, en criollo:**
@@ -67,7 +67,7 @@ nombre**: por eso P8 se clasifica `candidate` aunque tenga nombre (`classify.ts:
 | `ephemeral` | Invocó un flujo declarado en `ephemeral-flows` (política del proyecto). | `classify.ts:195`, `index.ts:132` |
 | `empty` | No tiene mensajes. | `classify.ts:208` |
 
-**`ephemeral-flows`** es la única clave que el plugin lee de la política: un bloque en
+**`ephemeral-flows`** es la única clave que la extensión lee de la política: un bloque en
 `AGENTS.md` del proyecto, entre los marcadores `<!-- pi-session-scrub:start -->` y
 `end -->`. Todo lo demás del bloque es guía para el agente, no configuración
 (`parsePolicyBlock`, `policy.ts:97`; `readPolicyConfig`, `index.ts:249`).
@@ -76,12 +76,12 @@ nombre**: por eso P8 se clasifica `candidate` aunque tenga nombre (`classify.ts:
 
 ## 4. Grados de triage: hecho vs adivinanza
 
-`TRIAGE_GRADE` (`index.ts:809`). Esto es lo que decide **si el plugin sabe o supone**.
+`TRIAGE_GRADE` (`index.ts:809`). Esto es lo que decide **si la extensión sabe o supone**.
 
 | Grado | Qué es | Dónde |
 | --- | --- | --- |
-| **`machine`** (machine keep) | Sesión **nombrada** sin veredicto. El nombre ya declara el estado, así que el plugin **no opina**: propone `keep` como **hecho**, con la rationale `named session — presumed active`. | `index.ts:809`, `index.ts:1430` |
-| **`weak`** | Sesión **sin nombre**. El plugin no puede saber: mira edad y mensajes y **adivina**. | `index.ts:809`, `index.ts:1113` |
+| **`machine`** (machine keep) | Sesión **nombrada** sin veredicto. El nombre ya declara el estado, así que la extensión **no opina**: propone `keep` como **hecho**, con la rationale `named session — presumed active`. | `index.ts:809`, `index.ts:1430` |
+| **`weak`** | Sesión **sin nombre**. La extensión no puede saber: mira edad y mensajes y **adivina**. | `index.ts:809`, `index.ts:1113` |
 | **`judged`** | Ya lo decidió el humano. | `index.ts:809` |
 
 **weak guess** = la adivinanza de una fila `weak`: `finished` si la edad ≥ `MAX_AGE_MS`,

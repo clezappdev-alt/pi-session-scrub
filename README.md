@@ -19,12 +19,12 @@ Pi keeps every session you ever ran. Some are finished work, some are experiment
 abandoned in ten minutes, and `/resume` shows them all the same way — a list you scroll
 past instead of a list you use.
 
-This plugin gives that list a vocabulary, and it costs nothing until you ask:
+pi-session-scrub gives that list a vocabulary, and it costs nothing until you ask:
 
 - **Zero tokens by default.** No `before_agent_start` injection, ever.
 - **Opt-in only.** Commands run when you ask; closing a session asks nothing.
-- **Reversible.** Nothing is deleted. Closed sessions move to a plugin-owned trash
-  directory, with a byte-for-byte backup taken before any write, and come back with one
+- **Reversible.** Nothing is deleted. Closed sessions move to a trash directory the
+  extension owns, with a byte-for-byte backup taken before any write, and come back with one
   command.
 
 A session's name carries its state, and that is what you see in the picker:
@@ -44,6 +44,11 @@ pi install git:github.com/clezappdev-alt/pi-session-scrub@v0.6.1
 Then enable it in `pi config` and reload. Install a **tag**, never `master`: a git ref is
 pinned, and `pi update --extensions` reconciles the checkout without moving the ref you
 chose.
+
+Two names, one thing: **`pi-session-scrub` is the package** — what you install, tag and find
+on npm — and **`session-scrub` is the extension it loads**, the name Pi shows in its status
+bar, the directory in the paths above, and the name this document uses when it talks about
+the extension's behaviour.
 
 To try it without installing anything:
 
@@ -65,7 +70,7 @@ can guess:
 ```
 
 `/scrub:restore` undoes any of it. None of that is required, and none of it runs on its own:
-if you never type a command, the plugin never writes.
+if you never type a command, the extension never writes.
 
 Three rules worth knowing before the first `apply`:
 
@@ -110,7 +115,7 @@ Flags and edge cases per command, with examples: [`docs/guide.md`](docs/guide.md
 
 ## The agent's half
 
-The plugin injects nothing into the model's context, so the agent will not reach for its
+The extension injects nothing into the model's context, so the agent will not reach for its
 two tools unless something tells it to: **you, in chat**, or **the project's policy block**,
 written with `/scrub:init` and refreshed with `/scrub:init --update` when the template
 changes.
@@ -127,7 +132,7 @@ the handoff" is a request to the agent; the handoff itself is your command.**
 
 Two tools also carry the project's only machine-read configuration: `ephemeral-flows:`,
 one line in the policy block that names the skill flows you consider disposable. Everything
-else in the block is a standing order for the agent, not configuration for the plugin.
+else in the block is a standing order for the agent, not configuration for the extension.
 
 ## Between sessions
 
