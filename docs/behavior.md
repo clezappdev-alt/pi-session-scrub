@@ -1,7 +1,7 @@
 # session-scrub — behavior specification (as-built)
 
 **Status:** as-built documentation, derived from source; requirements are cited by ID from the canonical spec and never restated here.
-**Reflects:** anchored to the released tag `v0.6.0`; Layers A–B describe `master` at the `v0.6.0` commit (2026-10-26), which is what that tag releases — everything `v0.5.1` carried (the handoff promise, the bounded result line, and the cell-budgeted call lines), plus the write guards: no write follows a symlink (the backup copy and the `/scrub:init` append), the restore's overwrite refusal is now pinned by a test, and `moveToTrash` / `moveFromTrash` moved to `sessionfs.ts` with unchanged behavior. Nothing described below is unreleased. The anchor is checked against `git describe --tags` by `doccheck.test.ts` and the whole document is re-reconciled at each new tag, not per commit.
+**Reflects:** anchored to the released tag `v0.6.1`; Layers A–B describe `master` at the `v0.6.1` commit (2026-10-26), which is what that tag releases — everything `v0.6.0` carried (the handoff promise, the bounded result line, and the cell-budgeted call lines), plus the write guards (no write follows a symlink; the restore's overwrite refusal is pinned by a test) and the session discovery fix that makes a custom `--session-dir` the directory both read and written. Nothing described below is unreleased. The anchor is checked against `git describe --tags` by `doccheck.test.ts` and the whole document is re-reconciled at each new tag, not per commit.
 
 ## How to read this document
 
