@@ -2,7 +2,7 @@
 
 **Domain:** `session-scrub` · **Canonical** · **Source change:** `session-scrub-cleanup` (slice 1)
 **Verified state:** 2026-09-13 · verify-report 12/12 PASS (with 4 ACCEPTED deviations, see § Verified deviations)
-**Scope:** first product slice. No canonical spec existed prior (greenfield plugin); this file is created from the verified change delta per greenfield sync semantics.
+**Scope:** first product slice. No canonical spec existed prior (greenfield extension); this file is created from the verified change delta per greenfield sync semantics.
 
 ## Purpose
 
@@ -186,7 +186,7 @@ declare function handleScrubMark(input: {
 3. **Per-item `confirm()` loop is the primary TUI path.** Dist `select()` is single-select only, so multi-select is not available in slice 1. `/scrub-apply` and `/scrub-restore` iterate the actionable/trashed set in list order with `confirm(title, detailRow)`; empty selection → `notify("Cancelled.")`.
 4. **Dry-run invariance is proven by file-set identity + absent trash dir,** not whole-dir checksums. Live session files grow every turn, so byte checksums cannot match; mutation-freedom holds when the session file set is identical and no trash dir was created.
 5. **Live identity is resolved path + session id** (not bare string equality alone), with a synthetic `live` row in audit output so counts reconcile with `/resume`.
-6. **Hint delivery uses `agent_end` + in-memory once-set in addition to the `agent_start` gate entry,** fixing the turn-1 blind spot; the gate entry `{ version: 1, slug, offeredAt }` remains the persistent once-per-session guard. The plugin never calls `setSessionName()`.
+6. **Hint delivery uses `agent_end` + in-memory once-set in addition to the `agent_start` gate entry,** fixing the turn-1 blind spot; the gate entry `{ version: 1, slug, offeredAt }` remains the persistent once-per-session guard. The extension never calls `setSessionName()`.
 
 ## Command specifications
 
@@ -202,7 +202,7 @@ declare function handleScrubMark(input: {
 - TUI path: per-item `confirm()` loop over the actionable set; empty selection → `notify("Cancelled.", info)`, exit; confirmed selection → `moveToTrash` per file (per-file error notify, continue); post-run re-list + `notify(info, "Trashed <N> session(s). Remaining: <Y>.")` — pluralized, singular for one session.
 - Execution uses `moveToTrash` (rename, auto-mkdir) with per-file error reporting and no copy/unlink fallback.
 
-### `/scrub-restore` — restore from plugin trash
+### `/scrub-restore` — restore from the extension's trash
 - Usage: `/scrub-restore` (no flags).
 - Lists files in `getTrashDir()` contents; empty/missing dir → `notify(info, "No trashed sessions for this project.")`, exit.
 - Non-TUI: notify list only. TUI: per-item `confirm()` loop → `moveFromTrash` per file (mkdir sessions dir, never overwrite existing target, per-file catch + continue) → post-run `notify(info, "Restored <N> session(s).")` — pluralized, singular for one session.
@@ -335,7 +335,7 @@ The system MUST surface a deterministic `deriveSlug` hint via `setStatus("scrub-
 - WHEN the hint flow runs twice
 - THEN the first run sets status + writes the gate entry and the second run does nothing.
 
-### REQ-10 — Plugin-owned trash, reversible, no permanent delete
+### REQ-10 — Extension-owned trash, reversible, no permanent delete
 The system MUST move trashed sessions with atomic rename into `getTrashDir()` (auto-created sibling of the session dir), retain them indefinitely in slice 1, expose restore via command + manual `mv`, and MUST NOT call `unlink`/`rm`, the OS `trash` CLI, or any purge path; there is no `/scrub-empty` in slice 1.
 
 #### Scenario: rename failure never deletes
@@ -365,7 +365,7 @@ The system MUST ship slice 1 as TypeScript strict with const-object enums, flat 
 1. **T1 clean boot:** `pi -e ./extensions/session-scrub/index.ts` starts with no errors; `/reload` succeeds.
 2. **T2 audit truth:** seed named/unnamed/empty/old sessions; `/scrub` classifications match REQ-01; counts reconcile with `/resume` (live shown as live).
 3. **T3 dry-run:** `/scrub-apply --dry-run` lists exactly the actionable set with detail; filesystem file-set identical, no trash dir created.
-4. **T4 apply:** TUI per-item confirm 1–2 candidates → files appear in the plugin trash sibling dir; re-list count drops accordingly.
+4. **T4 apply:** TUI per-item confirm 1–2 candidates → files appear in the extension's trash sibling dir; re-list count drops accordingly.
 5. **T5 restore:** `/scrub-restore` lists trashed; confirm one → file returns to sessions dir with verdict preserved; `/scrub` shows it again; trash empty.
 6. **T6 EXDEV honesty:** by inspection + throwing rename path — per-file error notified; source intact; no fallback copy/unlink (no destructive path exists in code).
 7. **T7 non-TUI:** `pi --print` (and `--json`) `/scrub-apply` and `/scrub-restore` complete with notify-only output, exit 0; no hang.
@@ -676,7 +676,7 @@ The system MUST ship the UX layer as TypeScript strict with const-object verdict
 **Authority caveat — recorded because it is the failure this slice repairs.** The block shipped two kinds of requirement. NM-01…NM-05 were written before execution. Five surfaces were built with **no requirement at all**: `/scrub:adopt`, `/scrub:handoff`, the `scrub_close` tool, display ids, and the triage-set exclusion. For the second group this section specifies **as built from verified source**, which is the only honest source that exists; it does not invent an intent nobody wrote.
 
 **SUPERSEDED clauses (marked in place, not deleted).**
-- **REQ-09**, clause forbidding the plugin to name sessions programmatically → superseded by **NB-03** and **NB-04**. Naming is still never automatic and never inferred; the plugin names only inside an explicit user action, using the same call `/name` uses.
+- **REQ-09**, clause forbidding the extension to name sessions programmatically → superseded by **NB-03** and **NB-04**. Naming is still never automatic and never inferred; the extension names only inside an explicit user action, using the same call `/name` uses.
 - **REQ-01**, predicate → modified by **NB-07** (verdict precedence, conversation-turn floor) and by **NB-01/NB-02** (the name outranks the verdict entry).
 - TR-02 named-first page order and its `+R more deferred` line were already superseded by UX-01/UX-06; both of those hold unchanged.
 
@@ -826,7 +826,7 @@ Rationale: an explicit verdict is a decision taken by someone who looked at that
 
 ### NB-08 — The by-path write stack: backup, parse-before, verify-after, and no way around it
 
-Every write to a session other than the live one MUST go through one stack: refuse the live session and a session outside the current runtime's own session directory (NM-01); refuse a file that no longer exists; write a per-file backup into `getBackupDir()` — the plugin's own directory beside the trash root, never `/tmp`; parse the target before writing and refuse when Pi would refuse it; append only, never rewrite an entry and never compute `parentId` by hand; then verify the file still parses, gained **exactly one** entry (physical line count, because Pi's parser skips a malformed line and cannot distinguish "gained one" from "rewritten shorter"), and carries the requested name. Any failure MUST be surfaced as a warning and bucketed as an error — never reported as applied.
+Every write to a session other than the live one MUST go through one stack: refuse the live session and a session outside the current runtime's own session directory (NM-01); refuse a file that no longer exists; write a per-file backup into `getBackupDir()` — the extension's own directory beside the trash root, never `/tmp`; parse the target before writing and refuse when Pi would refuse it; append only, never rewrite an entry and never compute `parentId` by hand; then verify the file still parses, gained **exactly one** entry (physical line count, because Pi's parser skips a malformed line and cannot distinguish "gained one" from "rewritten shorter"), and carries the requested name. Any failure MUST be surfaced as a warning and bucketed as an error — never reported as applied.
 
 For any non-live session whose file was modified within 120 seconds the system MUST raise the confirmation requirement rather than refuse (NM-03), and MUST NOT provide `--force`, `-f`, `--yes`, `-y`, `--skip-guard` or `--no-confirm` — those spellings, and their `=`-suffixed forms, MUST be refused by name so they cannot fall through to a session search that would answer "no sessions matched". A file that cannot be `stat`ed MUST read as settled, not fresh.
 
@@ -935,13 +935,13 @@ Cross-home listing, LLM naming, migration of historical sessions without confirm
 
 **Source:** `openspec/changes/session-scrub-handoff-promise/spec.md` (S1–S8). NB-03 and NB-04 above are MODIFIED in place; nothing else in the canonical file changes.
 
-**The defect closed.** `traspaso` is the only state that asserts something about another session, and `scrub_close` could write it — so the plugin could announce a continuation that did not exist yet. The consequence was permanent: `classifySession` returns `namedProtected` for every named session, so the row could never be cleaned by `/scrub:apply`; and the standalone promise carried no pointer at all, because `closeName` never invents a token (measured on a fresh session: `traspaso: implementar el handoff`).
+**The defect closed.** `traspaso` is the only state that asserts something about another session, and `scrub_close` could write it — so the extension could announce a continuation that did not exist yet. The consequence was permanent: `classifySession` returns `namedProtected` for every named session, so the row could never be cleaned by `/scrub:apply`; and the standalone promise carried no pointer at all, because `closeName` never invents a token (measured on a fresh session: `traspaso: implementar el handoff`).
 
 **Two halves, one writer each.**
 1. `name.ts:CLOSE_STATES` — four states; the tool's TypeBox union is built from it, so the model-facing enum and the tested set cannot drift (`doccheck.test.ts` pins both).
 2. `index.ts:handleScrubHandoff` — the destination is created, seeded and named first; the origin's `traspaso:` is written afterwards by path (NB-08 stack, with the destination as the live path to refuse). The order was proven equivalent before the change: creating the child first and renaming the origin by path produced a byte-identical `/resume` listing, and `showSessionSelector()` hands the picker a lazy `SessionManager.list(...)` loader, so rows are read from disk when the panel opens.
 
-**Boundary, stated.** `/name` and `/scrub:adopt` keep writing `traspaso:`: a human's intention, and a migration of sessions that already happened. A1 closes the path where the plugin asserts an outcome on its own initiative. Detecting promises already on disk (a `/scrub:audit` finding) was considered and rejected: it makes the lie visible only when someone looks, and the write order makes it impossible.
+**Boundary, stated.** `/name` and `/scrub:adopt` keep writing `traspaso:`: a human's intention, and a migration of sessions that already happened. A1 closes the path where the extension asserts an outcome on its own initiative. Detecting promises already on disk (a `/scrub:audit` finding) was considered and rejected: it makes the lie visible only when someone looks, and the write order makes it impossible.
 
 **What did not change.** The five-state vocabulary and its parsing; `closeName` and the head rules (NB-11..NB-16); verdict derivation; the destination name (`pausa: desde …`); the seeded message payload; and the absence of `session_start`/`session_shutdown` handlers (REQ-12) — the fix is a write order, not a lifecycle hook.
 

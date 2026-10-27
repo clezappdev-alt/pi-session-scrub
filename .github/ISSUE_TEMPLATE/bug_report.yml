@@ -1,5 +1,5 @@
 name: Bug report
-description: Something the plugin did, or stopped doing, and it should not have
+description: Something the extension did, or stopped doing, and it should not have
 labels: [bug, needs-repro]
 body:
   - type: markdown
@@ -23,7 +23,7 @@ body:
     id: expected
     attributes:
       label: What you expected
-      description: What the plugin should have done instead, and why you think so.
+      description: What the extension should have done instead, and why you think so.
     validations:
       required: true
 
@@ -39,7 +39,7 @@ body:
       required: true
 
   - type: input
-    id: plugin-version
+    id: extension-version
     attributes:
       label: pi-session-scrub version
       description: The tag you installed, or the `version` in the `package.json` you cloned.
