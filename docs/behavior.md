@@ -299,8 +299,10 @@ locates the region with the same scanner `planInitWrite` uses
 - `update` — the region is rewritten in place, everything outside the markers kept
   byte-for-byte. `--dry-run` / non-interactive notifies
   `Dry-run — nothing written. Policy block at line <n> would change:` plus
-  `policy.ts:diffPolicyBlock`'s changed lines only (`-` leaves, `+` arrives); the
-  TUI confirms `"Update the session-scrub policy block in AGENTS.md?"` with that
+  `policy.ts:diffPolicyBlock`'s hunks — `-` leaves, `+` arrives, `  ` is context, and
+  the block's own common head and tail are trimmed; an interior line the update keeps
+  is never shown as a rewrite (the first live trial caught exactly that: three
+  identical lines rendered as a `-`/`+` pair); the TUI confirms `"Update the session-scrub policy block in AGENTS.md?"` with that
   diff. Accepted, the file is copied into the backups root *before* the write
   (`sessionfs.ts:backupFileAside`, and a failed backup stops the write), the write
   goes through `sessionfs.ts:replacePolicyBlock` behind the same §9.6 guard, and the
