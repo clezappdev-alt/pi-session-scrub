@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-10-27
+
+### Fixed
+
+- Session listings read the directory the plugin actually uses. Every
+  `SessionManager.list` call now passes the resolved session dir, so a custom
+  `--session-dir` is the directory `/scrub:audit`, `/scrub:apply` and
+  `/scrub:triage` read *and* the one the trash and backups write to. Found in the
+  v0.6.0 manual trial: the audit reported the live session only, because a
+  listing without that argument falls back to the default directory. A
+  structural gate now fails when a call site omits it.
+
 ## [0.6.0] - 2026-10-26
 
 ### Added
@@ -124,7 +136,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `scrub_mark` tool, storing verdicts as custom entries inside the session
   file so they never reach LLM context.
 
-[Unreleased]: https://github.com/clezappdev-alt/pi-session-scrub/compare/v0.6.0...master
+[Unreleased]: https://github.com/clezappdev-alt/pi-session-scrub/compare/v0.6.1...master
+[0.6.1]: https://github.com/clezappdev-alt/pi-session-scrub/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/clezappdev-alt/pi-session-scrub/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/clezappdev-alt/pi-session-scrub/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/clezappdev-alt/pi-session-scrub/compare/v0.4.2...v0.5.0
