@@ -85,3 +85,29 @@ a local database.
 3. Verify as a stranger would: `npm ci --ignore-scripts && npm run check`.
 4. Install for real (global) only on tagged versions:
    `pi install git:github.com/clezappdev-alt/pi-session-scrub@<tag>`; toggle with `pi config`.
+
+<!-- pi-session-scrub:start -->
+# session-scrub policy — project-local, opt-in, one block per project.
+# Everything here but one key is written for the AGENT, not for the plugin:
+# it is the standing order for when to use scrub_mark and scrub_close.
+#
+# VERDICTS (record via the scrub_mark tool, with an optional reason):
+#   keep      — this session holds work worth preserving; never a trash candidate.
+#   paused    — block closure: work stopped but WILL continue later; not a candidate.
+#   finished  — session closure: the work is done; the session becomes a trash candidate.
+#   ephemeral — this session ran one of the ephemeral flows below; trash candidate.
+#   trash     — explicitly condemned; trash candidate even if the session is named.
+#
+# WHEN TO MARK:
+#   session_rename — when this session gets named or renamed (/name), record keep.
+#   block_close    — when work pauses with intent to resume, record paused.
+#   session_close  — when the work is done, record finished.
+#   ephemeral flow — when the session invokes a flow listed in ephemeral-flows, record ephemeral.
+#
+# EPHEMERAL FLOWS — the only key the plugin itself reads. Exact skill-flow
+# names as invoked (the name after /skill:), comma-separated. ONLY these
+# flows ever qualify a session as ephemeral. Leave the placeholders if none.
+verdicts: keep | paused | finished | ephemeral | trash
+mark-on: session_rename, block_close, session_close
+ephemeral-flows: <flow-name-1>, <flow-name-2>
+<!-- pi-session-scrub:end -->
