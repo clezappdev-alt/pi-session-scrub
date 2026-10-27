@@ -472,3 +472,33 @@ test("session discovery asks the session manager for its own directory", () => {
     `SessionManager.list called without the resolved session dir — ${withoutDir.map((a) => `list(${a.trim()})`).join("; ")}`,
   );
 });
+
+test("version anchor: the commit the tag names declares that version", (t) => {
+  // The anchor test above compares a *document* against `git describe --tags`. It
+  // cannot see whether the tag itself is honest. It was not: `v0.6.1` was created
+  // before its release commit, so the tagged tree still declared `0.6.0` and
+  // `git describe` agreed with the document while the tag named the wrong commit.
+  // §11 asks for version and tag to agree *at the tag*, so this checks the tree the
+  // tag points at, not the working one.
+  const describe = gitDescribe();
+  if (describe.skip) {
+    t.skip(describe.skip);
+    return;
+  }
+  const tag = baseTag(describe.output!);
+
+  const run = spawnSync("git", ["show", `${tag}:package.json`], { cwd: REPO_ROOT, encoding: "utf8" });
+  if (run.error) throw new Error(`could not read package.json at ${tag}: ${run.error.message}`);
+  if (run.status !== 0) {
+    t.skip(`cannot read package.json at ${tag}: ${run.stderr.trim()}`);
+    return;
+  }
+
+  const declared = (JSON.parse(run.stdout) as { version?: unknown }).version;
+  assert.equal(typeof declared, "string", `${tag}:package.json has no version field`);
+  assert.equal(
+    `v${declared}`,
+    tag,
+    `the commit ${tag} points at declares version ${declared}; version and tag must agree at the tag itself`,
+  );
+});
