@@ -7,8 +7,8 @@ opt-in commands only, and nothing deleted by surprise.
 
 [Install](#install) · [First ten minutes](#first-ten-minutes) ·
 [Working with the agent](#working-with-the-agent) · [Commands](#commands) ·
-[Handoffs](#handoffs) · [How a session is judged](#how-a-session-is-judged) ·
-[What it touches](#what-it-touches)
+[Tools](#tools) · [Handoffs](#handoffs) ·
+[How a session is judged](#how-a-session-is-judged) · [What it touches](#what-it-touches)
 
 ---
 
