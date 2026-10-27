@@ -308,12 +308,46 @@ sólo viaja el pendiente.
 
 ### 6.4 Cómo se usa
 
+Tres caminos, el mismo resultado. El primero es el que más rinde, y conviene tenerlo en
+los dedos:
+
+**1. Pedile al agente que lo prepare.** El handoff son dos actores por diseño: el agente
+cierra el bloque y deja lo que va a viajar; vos creás la sesión.
+
 ```
-# Camino normal: nombrás el pendiente y el handoff hace el resto
+vos     "prepará el handoff: terminar la migración y correr la suite"
+agente  escribe la memoria del bloque        (protocolo de cierre de Engram)
+        nombra esta sesión                   scrub_close, estado pausa + el pendiente
+        te avisa que corras /scrub:handoff
+vos     /scrub:handoff
+```
+
+Lo que el agente **no** puede hacer es crear la sesión: `newSession` vive en el contexto
+de comando y una tool no lo tiene. Por eso el último paso es tuyo — y es un solo comando,
+sin argumento, porque el nombre ya lleva el pendiente. Esa división no es una limitación
+que haya que rodear: es la forma del host, y es lo que deja el bloque cerrado y listo
+antes de que la sesión vieja se convierta en `traspaso:`.
+
+| Paso | Quién | Qué queda |
+| --- | --- | --- |
+| Cerrar el bloque | el agente, con `scrub_close` | `pausa: <pendiente>`, con el linaje intacto |
+| Memoria del bloque | el agente, protocolo de cierre | lo único que el handoff lleva como contexto de fondo; su **título** es la línea que se lee |
+| Crear la continuación | **vos**, `/scrub:handoff` | la sesión nueva nombrada y sembrada; esta queda `traspaso:` |
+
+Un detalle que evita una ida y vuelta: no le pidas un veredicto después de que nombró.
+`scrub_mark` se niega cuando el nombre ya declara estado —el nombre es el registro— y te
+manda a `scrub_close`. El orden es nombrar y entregar, no nombrar y marcar.
+
+**2. Nombrás vos y el handoff hace el resto.**
+
+```
 /name pausa: implementar el traspaso con newSession
 /scrub:handoff
+```
 
-# El mismo efecto en un solo paso: el argumento es el pendiente
+**3. Un solo paso:** el argumento es el pendiente.
+
+```
 /scrub:handoff implementar el traspaso con newSession
 ```
 
@@ -322,9 +356,10 @@ sólo viaja el pendiente.
 `pausa:` o el que ya tenías, porque el handoff reescribe el estado a `traspaso:` cuando la
 sesión nueva existe.
 
-Antes de dispararlo, escribí la memoria del bloque (o pedile al agente que la escriba con
-el protocolo de cierre de Engram). Es lo único que el handoff puede llevar como contexto
-de fondo, y su **título** es la única descripción de una línea que viaja.
+En los caminos 2 y 3 la memoria del bloque la escribís vos (o se la pedís al agente con el
+protocolo de cierre de Engram) **antes** de disparar el comando: es lo único que el handoff
+puede llevar como contexto de fondo, y su **título** es la única descripción de una línea
+que viaja.
 
 ### 6.5 Cuándo usarlo (y cuándo no)
 
