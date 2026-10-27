@@ -283,27 +283,59 @@ export function planInitUpdate(existing: string): InitUpdatePlan {
 }
 
 /**
- * The changed lines only: common head and tail trimmed, `-` for what leaves and
- * `+` for what arrives.
+ * The changed hunks, with the interior the two sides share kept as context.
  *
- * A full-block diff would bury four changed lines inside sixty unchanged ones, and
- * this is the text a human reads in a confirmation dialog before an automated
- * rewrite of their project file. Showing what actually moves is the point.
+ * The first live trial is why this is a real diff and not a common-prefix trim:
+ * trimming a shared head and tail leaves everything between them looking
+ * changed, so three lines the update keeps were shown as a `-`/`+` pair of
+ * identical text. A human reading that concludes the tool is rewriting lines it
+ * does not need to touch — and they are right to conclude it. A diff that lies
+ * about what changes is worse than a longer diff.
+ *
+ * So: longest common subsequence over lines, `-` leaves, `+` arrives, `  ` is
+ * context (two spaces, so the prefixes line up). The shared head and tail of the
+ * BLOCK are still trimmed — that is the part the human already knows — but an
+ * interior line that survives keeps its ` ` and is never reported as a rewrite.
  */
 export function diffPolicyBlock(before: string, after: string): string {
   const a = before.split("\n");
   const b = after.split("\n");
-  let head = 0;
-  while (head < a.length && head < b.length && a[head] === b[head]) head++;
-  let tail = 0;
-  while (
-    tail < a.length - head &&
-    tail < b.length - head &&
-    a[a.length - 1 - tail] === b[b.length - 1 - tail]
-  ) {
-    tail++;
+  // lcs[i][j] = length of the longest common subsequence of a[i..] and b[j..].
+  // The block is tens of lines, so the quadratic table is the cheap, obvious choice.
+  const lcs: number[][] = Array.from({ length: a.length + 1 }, () =>
+    new Array<number>(b.length + 1).fill(0),
+  );
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
   }
-  const removed = a.slice(head, a.length - tail).map((line) => `- ${line}`);
-  const added = b.slice(head, b.length - tail).map((line) => `+ ${line}`);
-  return [...removed, ...added].join("\n");
+  const ops: { kind: "same" | "del" | "add"; text: string }[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      ops.push({ kind: "same", text: a[i] });
+      i++;
+      j++;
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      ops.push({ kind: "del", text: a[i] });
+      i++;
+    } else {
+      ops.push({ kind: "add", text: b[j] });
+      j++;
+    }
+  }
+  for (; i < a.length; i++) ops.push({ kind: "del", text: a[i] });
+  for (; j < b.length; j++) ops.push({ kind: "add", text: b[j] });
+  let head = 0;
+  while (head < ops.length && ops[head].kind === "same") head++;
+  let tail = ops.length;
+  while (tail > head && ops[tail - 1].kind === "same") tail--;
+  return ops
+    .slice(head, tail)
+    .map((op) =>
+      op.kind === "same" ? `  ${op.text}` : op.kind === "del" ? `- ${op.text}` : `+ ${op.text}`,
+    )
+    .join("\n");
 }

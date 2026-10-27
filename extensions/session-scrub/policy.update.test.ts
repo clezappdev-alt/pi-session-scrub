@@ -203,3 +203,37 @@ test("UD-02: a pure addition shows only the lines that arrive", () => {
 test("UD-02: a purely prepended line does not swallow the tail", () => {
   assert.equal(diffPolicyBlock("b\nc", "a\nb\nc"), "+ a");
 });
+
+// ---------------------------------------------------------------------------
+// UD-02 (found in the live trial, not in a unit test)
+//
+// The first real confirmation showed three IDENTICAL lines as `-`/`+` pairs:
+// trimming a common head and tail leaves everything between them looking
+// changed, and a human reading that reasonably concludes the tool is rewriting
+// lines it does not need to touch. A diff that lies about what changes is worse
+// than a longer diff.
+// ---------------------------------------------------------------------------
+
+test("UD-02: an identical line between two changes is context, never a rewrite", () => {
+  assert.equal(
+    diffPolicyBlock("x\na\nm\nb\nz", "x\nA\nm\nB\nz"),
+    "- a\n+ A\n  m\n- b\n+ B",
+  );
+});
+
+test("UD-02: the real stale block never shows a line as both removed and added", () => {
+  const plan = planInitUpdate(withFlows(PREVIOUS_TEMPLATE, "code-review"));
+  assert.equal(plan.kind, "update");
+  if (plan.kind !== "update") return;
+  const lines = plan.diff.split("\n");
+  const removed = lines.filter((l) => l.startsWith("- ")).map((l) => l.slice(2));
+  const added = lines.filter((l) => l.startsWith("+ ")).map((l) => l.slice(2));
+  assert.ok(removed.length > 0 && added.length > 0, "the fixture must actually change");
+  for (const line of removed) {
+    assert.equal(
+      added.includes(line),
+      false,
+      `a line the update keeps must not be shown as removed: ${JSON.stringify(line)}`,
+    );
+  }
+});
