@@ -137,7 +137,18 @@ quoted text, never markers and never keys, so a template pasted as an example in
 project's own docs cannot become policy (PB-02). The plugin reads exactly one key:
 `ephemeral-flows:` — comma-separated exact skill-flow names; blank, `#`-comment,
 placeholder (`<…>`) and unknown lines are skipped. The `verdicts:` and `mark-on:`
-lines in the template are agent guidance, parsed by nothing. Any parse failure or
+lines in the template are agent guidance, parsed by nothing. That guidance carries
+the precedence the code enforces: the name is the record, and a name that starts
+with a state already IS that session's verdict (`name.ts:verdictFromState` —
+`pausa`/`espera` → `paused`, `abierto` → `keep`, `hecho`/`traspaso` → `finished`),
+which is why `scrub_mark` refuses when the name declares a state (NB-02) and why a
+refused mark means nothing needs marking. The `session_rename` rule is therefore
+conditional: it orders `keep` only for a name that declares no state, the one case
+where the mark is both writable and load-bearing (a state-less name resolves no
+verdict, so it would otherwise return to `/scrub:triage`). `policy.test.ts` parses
+the state → verdict rows out of `POLICY_TEMPLATE` and holds them to
+`verdictFromState` for every `STATE` value, so a new state cannot land in the code
+while the block still describes the old vocabulary. Any parse failure or
 missing block collapses to `ephemeralFlows: []` (`index.ts:readPolicyConfig`),
 with which no session is ever an ephemeral candidate by flow (REQ-03).
 
@@ -387,7 +398,9 @@ is written last, that sentence is true about the origin too: it was left as it w
 session whose name already declares a state →
 `This session already declares its state as "<name>". The name is the record; use
 scrub_close to change it. Nothing was written.` (NB-02: writing a record that
-cannot take effect is refused, not written); no live session file →
+cannot take effect is refused, not written; the policy block says so in its
+PRECEDENCE section, so a refused mark reads as nothing-to-do rather than a
+failure); no live session file →
 `"No live session file; verdict not recorded."`. Write: `pi.appendEntry` with
 `version: 1` and an ISO `at` — memory and disk together. No read-before-write and
 no update-in-place: every call appends, later `at` wins on read. Failures report
