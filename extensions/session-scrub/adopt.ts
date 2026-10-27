@@ -3,7 +3,7 @@
 //
 // Two rules, and both are refusals:
 //
-//   1. The plugin fills a state only when a machine already asserted one. An explicit
+//   1. The extension fills a state only when a machine already asserted one. An explicit
 //      verdict qualifies. A file being old does not — "older than seven days" is not
 //      `pausa:`, and inventing it puts a promise in /resume that nobody ever made.
 //   2. The human text is never rewritten. Adoption supplies a missing prefix and keeps

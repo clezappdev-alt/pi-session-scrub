@@ -1,6 +1,6 @@
 // Tests for slice D adoption planning.
 //
-// The rule under test is a refusal, not a capability: the plugin may fill a state only
+// The rule under test is a refusal, not a capability: the extension may fill a state only
 // when a machine already asserted it. An explicit verdict is such an assertion; a file
 // being old is not. A session that is merely older than seven days is NOT `pausa:` —
 // inventing that state would put a promise in /resume that nobody ever made.

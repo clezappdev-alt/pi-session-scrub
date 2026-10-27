@@ -481,7 +481,7 @@ test("the message carries the memory title, the only summary that travels", () =
 test("the message does not tell the model how to look things up", () => {
   // The topic_key is already in the message and mem_search's signature is in the tool
   // list. Naming the tool adds no information, costs context in every later turn, and
-  // would make the plugin dictate the agent's process — which is the opposite of the
+  // would make the extension dictate the agent's process — which is the opposite of the
   // design's division of labour.
   const message = buildHandoffMessage({
     ...ORIGIN,

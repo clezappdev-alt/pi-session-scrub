@@ -3,7 +3,7 @@
 // Session ids are uuid v7, so their first twelve hex characters are a millisecond
 // timestamp plus a small random field. Sessions created in a burst — a loop launching
 // `pi` once per candidate, a subagent fan-out, anything automated — therefore share far
-// more than the eight characters the plugin used to show. Observed on real data: twelve
+// more than the eight characters the extension used to show. Observed on real data: twelve
 // sessions whose first eight characters were `01a1444a`, and no fixed width would have
 // separated them either, because they agreed on the first twelve.
 //

@@ -290,7 +290,7 @@ test("WG-03: /scrub:init writes through appendPolicyBlock, never a bare writeFil
 test("UD-02: /scrub:init --update writes through replacePolicyBlock, behind the same guard", () => {
   // Same reasoning as WG-03: `replacePolicyBlock` is where `refuseNonRegularFile` runs.
   // An update path that called `writeFileSync` directly would rewrite a symlinked
-  // AGENTS.md at its target, which is the §9.6 refusal this plugin already paid for.
+  // AGENTS.md at its target, which is the §9.6 refusal this extension already paid for.
   const update = sourceSlice(INDEX_TS, "async function handleScrubInitUpdate(", "\n}\n");
   assert.equal(
     update.includes("writeFileSync"),
@@ -599,7 +599,7 @@ test("README anchor: the declared tag, the install tag and git describe agree", 
 // `SessionManager.list(cwd)` without the second argument reads the default
 // directory (`~/.pi/agent/sessions/--<encoded-cwd>--`), while the trash and backup
 // roots derive from `ctx.sessionManager.getSessionDir()`. Two roots, one command:
-// the plugin lists one directory and moves files out of another. The live session
+// the extension lists one directory and moves files out of another. The live session
 // still shows up (it comes from `ctx`, not disk), so the symptom reads as "1
 // session" instead of "0" — found in the v0.6.0 manual trial, invisible to a
 // host-free unit test because `SessionManager` is absent there, not simulated.

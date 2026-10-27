@@ -39,7 +39,7 @@ function runtime() {
 }
 
 // ---------------------------------------------------------------------------
-// Where the plugin's own directories live
+// Where the extension's own directories live
 // ---------------------------------------------------------------------------
 
 test("a backup never lands inside the trash directory", () => {

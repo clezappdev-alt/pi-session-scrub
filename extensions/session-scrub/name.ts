@@ -64,7 +64,7 @@ export interface ParsedName {
  *     [desde <parent> · ][<self> · ]<free text>
  *
  * The literal `desde` is what marks a parent — a bare leading hex token is the session's
- * own id, written by the plugin at handoff time. No sigil and no second delimiter: every
+ * own id, written by the extension at handoff time. No sigil and no second delimiter: every
  * name already on disk (`traspaso: <self> · …`, `pausa: desde <parent> · …`) already fits
  * this reading, so legacy names parse under the same pattern (S4).
  *
@@ -148,7 +148,7 @@ export function parseName(name: string): ParsedName {
  * Render a name from a state and its free text.
  *
  * Idempotent: feeding a formatted name back in returns it unchanged, because the human
- * may retype a name the plugin already proposed.
+ * may retype a name the extension already proposed.
  */
 export function formatName(state: State, text: string): string {
   // Route through parseName so an already-prefixed text loses its old prefix instead

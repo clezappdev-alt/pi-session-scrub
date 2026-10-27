@@ -1,4 +1,4 @@
-// The filesystem boundary: where the plugin's own directories live, and how a session
+// The filesystem boundary: where the extension's own directories live, and how a session
 // file is snapshot, backed up and measured for freshness.
 //
 // Extracted from index.ts for the same reason `classify.ts` was: this is the safety
@@ -18,7 +18,7 @@ import { readSnapshot, isFresh, type WriteSnapshot } from "./adopt.ts";
 /**
  * Pi has already created the sessions directory; these live beside it. Both derive
  * their location from the session dir Pi reports rather than from an invented transform,
- * so the plugin never guesses where Pi keeps its state.
+ * so the extension never guesses where Pi keeps its state.
  *
  * Two levels up from the per-project directory is the runtime's own state directory:
  *
