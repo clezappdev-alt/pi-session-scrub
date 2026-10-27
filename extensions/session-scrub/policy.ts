@@ -126,6 +126,50 @@ export function parsePolicyBlock(text: string): PolicyConfig | undefined {
 }
 
 // ---------------------------------------------------------------------------
+// Block location — ONE scanner, so the writer and the updater can never disagree
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the block actually is, by 1-based line.
+ *
+ * `endLine` is absent when a start marker has no closing marker after it: the region has
+ * no known end, and a caller that needs to replace it must refuse rather than invent one.
+ */
+export interface BlockRegion {
+  startLine: number;
+  endLine?: number;
+}
+
+/**
+ * Locate the block: first unfenced `start`, first unfenced `end` after it.
+ *
+ * The fence and inline-code rules are PB-02's, and they live here rather than in each
+ * caller: `planInitWrite` answering "a block exists at line N" and `planInitUpdate`
+ * answering "the region is lines N..M" must be two readings of one scan, or a project with
+ * a quoted template gets told the block exists by one path and does not by the other.
+ */
+export function findBlockRegion(text: string): BlockRegion | undefined {
+  let inFence = false;
+  let startLine: number | undefined;
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (isFenceLine(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const bare = withoutInlineCode(line);
+    if (startLine === undefined) {
+      if (bare.includes(POLICY_START)) startLine = i + 1;
+      continue;
+    }
+    if (bare.includes(POLICY_END)) return { startLine, endLine: i + 1 };
+  }
+  return startLine === undefined ? undefined : { startLine };
+}
+
+// ---------------------------------------------------------------------------
 // /scrub:init write planner (PB-03/PB-04)
 // ---------------------------------------------------------------------------
 
@@ -144,19 +188,122 @@ export type InitWritePlan =
  *    writing and dry-run stays a true no-op.
  */
 export function planInitWrite(existing: string): InitWritePlan {
-  let inFence = false;
-  const lines = existing.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (isFenceLine(line)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-    if (withoutInlineCode(line).includes(POLICY_START)) return { kind: "exists", line: i + 1 };
-  }
+  const region = findBlockRegion(existing);
+  if (region !== undefined) return { kind: "exists", line: region.startLine };
+  return { kind: "append", text: appendText(existing) };
+}
+
+/**
+ * The exact bytes a first run appends, separators included.
+ *
+ * One builder for both planners: `/scrub:init --update` on a blockless project must
+ * create the same block a plain `/scrub:init` would, byte for byte, or the two paths
+ * would produce two shapes of "the same" file.
+ */
+function appendText(existing: string): string {
   // Keep the historical spacing: one blank line before the block when the
   // file ends mid-line or is empty, none when it already ends with a newline.
   const sep = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
-  return { kind: "append", text: `${sep}\n${POLICY_TEMPLATE}` };
+  return `${sep}\n${POLICY_TEMPLATE}`;
+}
+
+// ---------------------------------------------------------------------------
+// /scrub:init --update planner (UD-01…UD-04)
+// ---------------------------------------------------------------------------
+
+/**
+ * The one key the plugin reads, and therefore the one line inside the block that
+ * belongs to the human: its value is project data, never template text.
+ */
+const HUMAN_KEY = "ephemeral-flows:";
+
+/** Guidance keys the template emits and therefore owns, rewritten on every update. */
+const GUIDANCE_KEYS = ["verdicts:", "mark-on:"];
+
+export type InitUpdatePlan =
+  | { kind: "append"; text: string }
+  | { kind: "unterminated"; line: number }
+  | { kind: "foreign"; line: number; text: string }
+  | { kind: "current"; line: number }
+  | { kind: "update"; line: number; diff: string; text: string };
+
+/** The template's region with the human's flows value in it, no trailing newline. */
+function regionWithFlows(flows: string | undefined): string {
+  const body = POLICY_TEMPLATE.replace(/\n$/, "");
+  if (flows === undefined) return body;
+  return body.replace(new RegExp(`^${HUMAN_KEY}.*$`, "m"), `${HUMAN_KEY} ${flows}`.trimEnd());
+}
+
+/**
+ * Pure decision behind `/scrub:init --update`: the handler does I/O and UI.
+ *
+ * Ownership is what makes an automated rewrite safe enough to offer:
+ *
+ *   - blank lines and `#` comments are the template's prose — rewritten;
+ *   - `verdicts:` and `mark-on:` are guidance the template owns — rewritten;
+ *   - `ephemeral-flows:` is the human's data — its VALUE survives verbatim;
+ *   - any other non-blank line belongs to nobody the plugin can identify, so the
+ *     update REFUSES and names it. Deleting a line the plugin does not recognize
+ *     because it was caught inside two markers is how a project loses its notes.
+ *
+ * A second `ephemeral-flows:` line is refused for the same reason: the parser
+ * unions them today, and collapsing two lines into one is a merge decision about
+ * the human's data, not a normalization.
+ */
+export function planInitUpdate(existing: string): InitUpdatePlan {
+  const region = findBlockRegion(existing);
+  if (region === undefined) return { kind: "append", text: appendText(existing) };
+  const { startLine, endLine } = region;
+  if (endLine === undefined) return { kind: "unterminated", line: startLine };
+  const lines = existing.split("\n");
+  // Lines strictly between the markers: the markers themselves are the block's
+  // identity and are re-emitted byte-for-byte by the template.
+  const inner = lines.slice(startLine, endLine - 1);
+  let flows: string | undefined;
+  for (let i = 0; i < inner.length; i++) {
+    const line = inner[i].trim();
+    if (line.length === 0 || line.startsWith("#")) continue;
+    if (GUIDANCE_KEYS.some((key) => line.startsWith(key))) continue;
+    if (line.startsWith(HUMAN_KEY)) {
+      if (flows !== undefined) return { kind: "foreign", line: startLine + 1 + i, text: line };
+      flows = line.slice(HUMAN_KEY.length).trim();
+      continue;
+    }
+    return { kind: "foreign", line: startLine + 1 + i, text: line };
+  }
+  const before = lines.slice(startLine - 1, endLine).join("\n");
+  const after = regionWithFlows(flows);
+  if (before === after) return { kind: "current", line: startLine };
+  return {
+    kind: "update",
+    line: startLine,
+    diff: diffPolicyBlock(before, after),
+    text: [...lines.slice(0, startLine - 1), after, ...lines.slice(endLine)].join("\n"),
+  };
+}
+
+/**
+ * The changed lines only: common head and tail trimmed, `-` for what leaves and
+ * `+` for what arrives.
+ *
+ * A full-block diff would bury four changed lines inside sixty unchanged ones, and
+ * this is the text a human reads in a confirmation dialog before an automated
+ * rewrite of their project file. Showing what actually moves is the point.
+ */
+export function diffPolicyBlock(before: string, after: string): string {
+  const a = before.split("\n");
+  const b = after.split("\n");
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (
+    tail < a.length - head &&
+    tail < b.length - head &&
+    a[a.length - 1 - tail] === b[b.length - 1 - tail]
+  ) {
+    tail++;
+  }
+  const removed = a.slice(head, a.length - tail).map((line) => `- ${line}`);
+  const added = b.slice(head, b.length - tail).map((line) => `+ ${line}`);
+  return [...removed, ...added].join("\n");
 }

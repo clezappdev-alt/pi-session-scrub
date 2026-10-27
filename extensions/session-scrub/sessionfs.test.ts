@@ -22,6 +22,8 @@ import {
   freshnessOf,
   refuseNonRegularFile,
   appendPolicyBlock,
+  replacePolicyBlock,
+  backupFileAside,
   moveToTrash,
   moveFromTrash,
 } from "./sessionfs.ts";
@@ -266,6 +268,59 @@ test("appending the policy block still appends to a regular file and creates a m
     mkdirSync(dirname(freshPath), { recursive: true });
     appendPolicyBlock(freshPath, "", POLICY_BLOCK);
     assert.equal(readFileSync(freshPath, "utf-8"), POLICY_BLOCK);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("replacing the policy block rewrites the whole file, and refuses a symlink", () => {
+  // `--update` writes the file the planner produced, not a splice: `writeFileSync`
+  // truncates, so the §9.6 guard has to run first. Both halves are pinned here rather
+  // than only structurally in doccheck.test.ts.
+  const root = mkdtempSync(join(tmpdir(), "scrub-update-"));
+  try {
+    const agentsPath = join(root, "AGENTS.md");
+    writeFileSync(agentsPath, "# rules\nstale block\n");
+    replacePolicyBlock(agentsPath, "# rules\nupdated block\n");
+    assert.equal(readFileSync(agentsPath, "utf-8"), "# rules\nupdated block\n");
+
+    const outside = join(root, "outside-agents.md");
+    writeFileSync(outside, "original\n");
+    const link = join(root, "linked", "AGENTS.md");
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(outside, link);
+    assert.throws(() => replacePolicyBlock(link, "overwritten\n"), /not a regular file/);
+    assert.equal(readFileSync(outside, "utf-8"), "original\n", "the link target must not be written");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("backing AGENTS.md aside before an update lands in the backups root, not the trash", () => {
+  // The copy is the way back from an automated rewrite of a file the project owns, so it
+  // must hold the bytes BEFORE the write and it must not sit where /scrub:restore looks.
+  const r = runtime();
+  try {
+    const agentsPath = join(r.root, "AGENTS.md");
+    writeFileSync(agentsPath, "the state before the update\n");
+    const backups = getBackupDir(r.sessionDir);
+    const backupPath = backupFileAside(agentsPath, backups, "AGENTS.md");
+
+    assert.equal(backupPath, backupPathFor(agentsPath, backups));
+    assert.equal(readFileSync(backupPath, "utf-8"), "the state before the update\n");
+    assert.equal(dirname(backupPath), backups);
+    assert.notEqual(backups, getTrashDir(r.sessionDir), "a backup inside the trash would be offered for restore");
+    assert.equal(existsSync(join(getTrashDir(r.sessionDir), basename(agentsPath))), false);
+  } finally { r.cleanup(); }
+});
+
+test("a backup that cannot be taken refuses, so the update never writes unguarded", () => {
+  const root = mkdtempSync(join(tmpdir(), "scrub-update-"));
+  try {
+    const outside = join(root, "outside-agents.md");
+    writeFileSync(outside, "original\n");
+    const link = join(root, "AGENTS.md");
+    symlinkSync(outside, link);
+    assert.throws(
+      () => backupFileAside(link, join(root, "backups"), "AGENTS.md"),
+      /not a regular file/,
+    );
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
