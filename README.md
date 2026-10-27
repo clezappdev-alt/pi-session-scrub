@@ -1,42 +1,22 @@
-<div align="center">
-
 # pi-session-scrub
 
-**Keep your Pi `/resume` list clean, descriptive and honest — with zero tokens spent
-and nothing deleted by surprise.**
+Keep your Pi `/resume` list clean, descriptive and honest. Zero tokens by default,
+opt-in commands only, and nothing deleted by surprise.
 
-<p>
-<a href="https://github.com/clezappdev-alt/pi-session-scrub/releases"><img src="https://img.shields.io/github/v/release/clezappdev-alt/pi-session-scrub?style=for-the-badge&labelColor=1A1218&color=F095C8" alt="Latest release"></a>
-<a href="https://github.com/clezappdev-alt/pi-session-scrub/actions/workflows/ci.yml"><img src="https://github.com/clezappdev-alt/pi-session-scrub/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-<img src="https://img.shields.io/badge/node-%E2%89%A522.19.0-D7A0B8?style=for-the-badge&labelColor=1A1218" alt="Node 22.19.0 or newer">
-<a href="LICENSE"><img src="https://img.shields.io/badge/MIT-D7A0B8?style=for-the-badge&labelColor=1A1218" alt="License: MIT"></a>
-<img src="https://img.shields.io/badge/status-beta-F095C8?style=for-the-badge&labelColor=1A1218" alt="Status: beta">
-</p>
+<img src="https://img.shields.io/badge/status-beta-2F7A6F?style=flat-square" alt="Status: beta"> · `v0.6.1` · MIT · Node `>=22.19.0` · Pi `>=1.2.0`
 
-<p>
-<a href="#install"><strong>Install</strong></a> &bull;
-<a href="#commands"><strong>Commands</strong></a> &bull;
-<a href="#what-it-touches"><strong>What it touches</strong></a> &bull;
-<a href="SECURITY.md"><strong>Security</strong></a> &bull;
-<a href="CONTRIBUTING.md"><strong>Contributing</strong></a>
-</p>
-
-<a href="https://github.com/Gentleman-Programming/gentle-ai">
-  <img width="220" src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />
-</a>
-
-</div>
+[Install](#install) · [Commands](#commands) · [Tools](#tools) · [Handoffs](#handoffs) ·
+[How a session is judged](#how-a-session-is-judged) · [What it touches](#what-it-touches)
 
 ---
 
 ## Why
 
 Pi keeps every session you ever ran. Some are finished work, some are experiments you
-abandoned in ten minutes, and `/resume` shows them as an undifferentiated wall of
-timestamps.
+abandoned in ten minutes, and `/resume` shows them all the same way — a list you scroll
+past instead of a list you use.
 
-The usual answer is a hook that injects a state script into every session — around 400
-tokens, on the first turn, forever. This plugin takes the opposite bet:
+This plugin gives that list a vocabulary, and it costs nothing until you ask:
 
 - **Zero tokens by default.** No `before_agent_start` injection, ever.
 - **Opt-in only.** Commands run when you ask; closing a session asks nothing.
@@ -80,10 +60,34 @@ Every one of them is explicit. None runs on its own.
 | `/scrub:triage [--apply]` | Assisted triage: read-only digest packs, your judgment in chat, then verdicts written with per-item confirmation |
 | `/scrub:adopt [--apply]` | Give sessions from before the naming convention a state prefix. Never rewrites the text after it |
 | `/scrub:init` | Append the opt-in policy block to the project's `AGENTS.md`. Idempotent, and refuses if a block is already there |
-| `/scrub:handoff` | Create the continuation this session promised: a new session, named and seeded |
-| `scrub_mark` (tool) | Record a verdict on this session. Stored as a custom entry, never in the model's context |
-| `scrub_close` (tool) | Name this session in one glanceable line: `pausa`, `abierto`, `espera`, `hecho` |
-| naming hint | Once per unnamed session the status bar suggests a slug from your first message. It never renames anything by itself |
+| `/scrub:handoff` | Create the continuation this session promised — see [Handoffs](#handoffs) |
+
+A naming hint runs alongside: once per unnamed session, the status bar suggests a slug
+from your first message. It never renames anything by itself.
+
+## Tools
+
+Two tools, for the agent to use when you ask it to judge or close a session. Both write
+through Pi's own session API, so the `/resume` picker and the file update together.
+
+| Tool | What it does |
+| :--- | :--- |
+| `scrub_mark` | Records a verdict — `keep`, `paused`, `finished`, `ephemeral`, `trash` — with an optional reason |
+| `scrub_close` | Names this session in one glanceable line: `pausa`, `abierto`, `espera`, `hecho` |
+
+**`scrub_mark` never rewrites.** Each call appends a `version: 1` entry with an ISO
+timestamp, and the latest one wins on read. It lives as a custom entry, so a verdict
+never enters the model's context. If the session's name already declares a state, it
+refuses — the name is the record, and writing a verdict that could not take effect would
+be a lie.
+
+**`scrub_close` keeps the lineage head.** It replaces the free text and preserves the
+head whole — `desde <parent> · <self> ·` — because that head is the only thing in the
+picker that says where the work came from. It never invents a token, and it strips a
+head-shaped prefix from the incoming text instead of stacking two. `traspaso` is
+deliberately **not** offered: it asserts a continuation in another session, and only
+`/scrub:handoff` can know that, because only the handoff creates it. While a handoff is
+pending, the honest state is `pausa`.
 
 ## How a session is judged
 
@@ -105,12 +109,47 @@ Three rules hold regardless of the table:
 - **`traspaso:` has one writer.** Only `/scrub:handoff` writes it, and only after the
   continuation exists.
 
+## Handoffs
+
+Work rarely ends; it pauses. `/scrub:handoff` creates the continuation instead of asking
+you to reconstruct the thread tomorrow:
+
+```
+/scrub:handoff finish the migration, then run the suite
+```
+
+The next step comes from the argument, or from this session's name. **No next step, no
+session** — it refuses and creates nothing.
+
+What it does, and the order is the guarantee:
+
+1. **The destination is created, seeded and named first**:
+   `pausa: desde <abbr> · <next step>`. The origin's state is never copied forward, because
+   the five states are exclusive.
+2. **The origin becomes the promise, last**: `traspaso: <abbr> · <next step>`, written by
+   path rather than through the live-session call, because after the switch the origin is
+   not the live session any more.
+3. **Cancelling writes nothing.** A cancelled handoff leaves both sessions exactly as they
+   were: no half-marker, no orphan pointing at a session that was never created.
+
+**What travels.** One `display: false` custom message, carrying pointers only: the
+origin's short id and name, the next step, and — when the session contains one — the last
+memory you wrote there, as topic key and title. **The conversation never travels**, so a
+long session does not become two long sessions, and nothing is duplicated.
+
+**The lineage survives.** If this session already came from another, the origin is
+re-written as `traspaso: desde <parent> · <abbr> · <next>` so the parent stays visible in
+the picker, and the new session points back at the one it came from. `<abbr>` is the
+shortest unique abbreviation over the project, not a fixed slice: measured, two handoffs
+four seconds apart shared their first eight characters, and a fixed slice would have
+pointed the child's marker at the child itself.
+
 ## What it touches
 
 | | Path | What |
 | :--- | :--- | :--- |
 | reads | `<pi-runtime>/sessions/--<project>--/*.jsonl` | session files: names, counts, first and last text, its own custom entries |
-| writes | the same files | one appended entry per name or verdict — never a rewrite |
+| writes | the same files | one appended entry per name, verdict or handoff seed — never a rewrite |
 | writes | `<pi-runtime>/session-scrub-backups/--<project>--/` | a byte-for-byte copy taken immediately before each write |
 | writes | `<pi-runtime>/session-scrub-trash/--<project>--/` | sessions moved out of Pi's directory by `/scrub:apply` |
 | writes | `<project>/AGENTS.md` | only on `/scrub:init`, appending one delimited block |
@@ -148,8 +187,11 @@ are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 **Beta.** The command surface is usable daily and still changes between minor versions;
 install a tag and read the [`CHANGELOG`](CHANGELOG.md) before updating.
 
-MIT — see [`LICENSE`](LICENSE). The plugin is built with
-[Gentle-AI](https://github.com/Gentleman-Programming/gentle-ai).
+MIT — see [`LICENSE`](LICENSE).
+
+<a href="https://github.com/Gentleman-Programming/gentle-ai">
+  <img width="180" src="https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png" alt="Built with Gentle-AI" />
+</a>
 
 Owner-facing guides, in Spanish: [`docs/guide.md`](docs/guide.md) (usage),
 [`docs/behavior.md`](docs/behavior.md) (as-built specification),
