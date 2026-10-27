@@ -19,6 +19,7 @@ import {
   parsePolicyBlock,
   planInitWrite,
 } from "./policy.ts";
+import { STATE, verdictFromState, type State } from "./name.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -225,4 +226,72 @@ test("the template itself carries both markers, in order, and parses as empty", 
   assert.equal(lines[lines.length - 1], POLICY_END, "the template must close with the end marker");
   assert.ok(POLICY_TEMPLATE.includes("ephemeral-flows: <flow-name-1>"), "the placeholder must be present");
   assert.deepEqual(parsePolicyBlock(POLICY_TEMPLATE), { ephemeralFlows: [] });
+});
+
+// ---------------------------------------------------------------------------
+// session-scrub-mark-on-precedence (MP-01, MP-02)
+//
+// The template is the standing order the agent reads in every session, and
+// nothing parses it — so the only thing a test can hold is the agreement between
+// what it TELLS an agent to do and what the code actually does. The rename rule
+// ordered `keep` unconditionally, while `scrub_mark` refuses exactly that write
+// once the name declares a state (NB-02). Measured 2026-10-27: the closing
+// session was named and not marked, and the close reported the refusal.
+// ---------------------------------------------------------------------------
+
+/** `<#   pausa, espera -> paused>` — the row form the block states its precedence in. */
+const PRECEDENCE_ROW = /^#\s+([a-z]+(?:\s*,\s*[a-z]+)*)\s+->\s+([a-z]+)\s*$/;
+
+/** The state → verdict table as the template states it, flattened. */
+function statedPrecedence(template: string): Map<string, string> {
+  const stated = new Map<string, string>();
+  for (const line of template.split("\n")) {
+    const match = PRECEDENCE_ROW.exec(line);
+    if (match === null) continue;
+    for (const state of match[1].split(",")) stated.set(state.trim(), match[2]);
+  }
+  return stated;
+}
+
+test("MP-02: the precedence the block states is the precedence the code implements", () => {
+  const stated = statedPrecedence(POLICY_TEMPLATE);
+  const states = Object.values(STATE) as State[];
+  assert.deepEqual(
+    [...stated.keys()].sort(),
+    [...states].sort(),
+    "the block must name every state exactly once — a sixth state cannot land silently",
+  );
+  for (const state of states) {
+    assert.equal(
+      stated.get(state),
+      verdictFromState(state),
+      `the block claims a different verdict for "${state}" than name.ts:verdictFromState`,
+    );
+  }
+});
+
+test("MP-02: the block says the refusal is deliberate, so a refused mark is not a failure", () => {
+  assert.ok(
+    POLICY_TEMPLATE.includes("the name is the record"),
+    "the precedence must name the rule, not just the exception",
+  );
+  assert.ok(
+    POLICY_TEMPLATE.includes("nothing is missing"),
+    "an agent that reads the block must know a refused mark means nothing needs marking",
+  );
+});
+
+test("MP-01: the rename rule is conditional, never a bare `record keep`", () => {
+  const renameLine = POLICY_TEMPLATE.split("\n").find((line) =>
+    line.trim().startsWith("#   session_rename"),
+  );
+  assert.notEqual(renameLine, undefined, "the template must keep a session_rename rule");
+  assert.ok(
+    renameLine?.includes("ONLY if the new name declares no state"),
+    "the rule must carry its condition: a name with a state already is the verdict",
+  );
+  assert.ok(
+    renameLine?.includes("PRECEDENCE"),
+    "the rule must point at the precedence section that explains the refusal",
+  );
 });

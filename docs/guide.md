@@ -144,6 +144,13 @@ Se escribe **una vez**: si el marcador de inicio ya existe en cualquier parte de
 el comando no actualiza ni fusiona y avisa que ya existe. Sin bloque, el plugin usa
 defaults conservadores: no infiere flujos efímeros.
 
+El agente lee ese bloque como orden permanente, y una de sus reglas depende del nombre. Al
+renombrar con `/name` se marca `keep`, pero **sólo si el nombre nuevo no declara estado**. Si
+el nombre ya arranca con `pausa:`, `abierto:`, `espera:`, `traspaso:` o `hecho:`, ese nombre
+*es* el veredicto y `scrub_mark` se niega: no falta nada, no es un error. Un nombre sin
+declarar estado, en cambio, no protege la sesión de `/scrub:triage`; marcarla `keep` es
+justamente lo que la saca de ahí.
+
 ### 3.3 Dos trampas de ergonomía
 
 - `/scrub:restore` **no acepta `--dry-run`**: en TUI restaura de verdad, con confirmación

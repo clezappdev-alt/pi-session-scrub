@@ -70,7 +70,7 @@ nombre**: por eso P8 se clasifica `candidate` aunque tenga nombre (`classify.ts:
 **`ephemeral-flows`** es la única clave que el plugin lee de la política: un bloque en
 `AGENTS.md` del proyecto, entre los marcadores `<!-- pi-session-scrub:start -->` y
 `end -->`. Todo lo demás del bloque es guía para el agente, no configuración
-(`parsePolicyBlock`, `policy.ts:89`; `readPolicyConfig`, `index.ts:246`).
+(`parsePolicyBlock`, `policy.ts:97`; `readPolicyConfig`, `index.ts:246`).
 
 ---
 
