@@ -17,9 +17,9 @@ export const POLICY_START = "<!-- pi-session-scrub:start -->";
 export const POLICY_END = "<!-- pi-session-scrub:end -->";
 
 export const POLICY_TEMPLATE = `<!-- pi-session-scrub:start -->
-# session-scrub policy — project-local, opt-in.
-# Lines starting with \`#\` are guidance FOR THE AGENT; the plugin only
-# reads the \`key: value\` lines below. The user fills the <placeholders>.
+# session-scrub policy — project-local, opt-in, one block per project.
+# Everything here but one key is written for the AGENT, not for the plugin:
+# it is the standing order for when to use scrub_mark and scrub_close.
 #
 # VERDICTS (record via the scrub_mark tool, with an optional reason):
 #   keep      — this session holds work worth preserving; never a trash candidate.
@@ -34,9 +34,9 @@ export const POLICY_TEMPLATE = `<!-- pi-session-scrub:start -->
 #   session_close  — when the work is done, record finished.
 #   ephemeral flow — when the session invokes a flow listed in ephemeral-flows, record ephemeral.
 #
-# EPHEMERAL FLOWS for this project: exact skill-flow names as invoked
-# (the name after /skill:), comma-separated. ONLY these flows ever qualify
-# a session as ephemeral. Leave the placeholders if none apply.
+# EPHEMERAL FLOWS — the only key the plugin itself reads. Exact skill-flow
+# names as invoked (the name after /skill:), comma-separated. ONLY these
+# flows ever qualify a session as ephemeral. Leave the placeholders if none.
 verdicts: keep | paused | finished | ephemeral | trash
 mark-on: session_rename, block_close, session_close
 ephemeral-flows: <flow-name-1>, <flow-name-2>
