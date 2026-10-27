@@ -1,7 +1,7 @@
 # session-scrub — behavior specification (as-built)
 
 **Status:** as-built documentation, derived from source; requirements are cited by ID from the canonical spec and never restated here.
-**Reflects:** anchored to the released tag `v0.6.1`; Layers A–B describe `master` at the `v0.6.1` commit (2026-10-26), which is what that tag releases — everything `v0.6.0` carried (the handoff promise, the bounded result line, and the cell-budgeted call lines), plus the write guards (no write follows a symlink; the restore's overwrite refusal is pinned by a test) and the session discovery fix that makes a custom `--session-dir` the directory both read and written. Nothing described below is unreleased. The anchor is checked against `git describe --tags` by `doccheck.test.ts` and the whole document is re-reconciled at each new tag, not per commit.
+**Reflects:** anchored to the released tag `v0.6.1`; Layers A–B describe `master` at the `v0.6.1` commit (2026-10-26), which is what that tag releases — everything `v0.6.0` carried (the handoff promise, the bounded result line, and the cell-budgeted call lines), plus the write guards (no write follows a symlink; the restore's overwrite refusal is pinned by a test) and the session discovery fix that makes a custom `--session-dir` the directory both read and written. **Beyond the tag, still unreleased on `master`:** the conditional rename rule and the block's PRECEDENCE section (`session-scrub-mark-on-precedence`), and `/scrub:init --update` (`session-scrub-init-update`) — both documented below because the as-built spec follows the code, and both waiting on the `v0.7.0` tag. The anchor is checked against `git describe --tags` by `doccheck.test.ts`, which is why the unreleased part is named here instead of moving the anchor: the tag has not moved yet, and the whole document is re-reconciled at each new tag, not per commit.
 
 ## How to read this document
 
@@ -167,6 +167,13 @@ A second `ephemeral-flows:` line is refused the same way the parser unions it: t
 lines of the human's data are not the plugin's to collapse. `--update` therefore
 cannot silently delete a line a project added between the markers — the refusal
 names it and says where to move it.
+
+**This repository's own block is pinned the same way** (`doccheck.test.ts`, R3):
+`AGENTS.md` must be what `--update` would leave, asserted by running the shipped
+planner over it (`planInitUpdate(AGENTS.md)` must return `current`) instead of
+re-implementing the comparison here. It is the gate that would have caught the
+hand edit of 2026-10-27, and a companion test drifts the template generically to
+prove the assertion actually bites.
 
 Any parse failure or
 missing block collapses to `ephemeralFlows: []` (`index.ts:readPolicyConfig`),
