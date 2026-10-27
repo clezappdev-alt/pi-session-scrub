@@ -71,7 +71,7 @@ hook: agent_end
 | `/scrub:audit` | none — `void args` (`index.ts:handleScrub`) |
 | `/scrub:apply` | `--dry-run` (raw substring test, `index.ts:resolveDryRun`); no other flag is read |
 | `/scrub:restore` | none — `void args` (`index.ts:handleScrubRestore`) |
-| `/scrub:init` | none — `void args` (`index.ts:handleScrubInit`) |
+| `/scrub:init` | `--dry-run` and `--update` (substring, read via `index.ts:resolveDryRun` and `index.ts:handleScrubInit`); no other flag is read |
 | `/scrub:triage` | `--apply` (substring), `--verbose` (whitespace-split token), `--dry-run` (stripped by `index.ts:cleanTriageArgs`, read only via `index.ts:resolveDryRun`); inline assignment grammar `idPrefix:verdict:"reason"` / `idPrefix:name:"slug"` / bare `idPrefix:keep` (`index.ts:parseTriageInput`) |
 | `/scrub:adopt` | `--apply` (exact token); inline assignment grammar `idPrefix:state` (`adopt.ts:parseAssignments`) |
 | `/scrub:handoff` | free text only — the next step to carry (`handoff.ts:planHandoffNames`) |
@@ -96,8 +96,11 @@ On `/scrub:triage` and `/scrub:adopt` a bypass-shaped token is refused by name
   `session-scrub-backups`, deliberately a sibling of the trash dir and never a
   directory inside it (a backup inside trash would be offered for restore).
 - The only file the plugin writes outside trash, backups and session files is
-  `<ctx.cwd>/AGENTS.md`, through `sessionfs.ts:appendPolicyBlock`
-  (`index.ts:handleScrubInit` plans it).
+  `<ctx.cwd>/AGENTS.md`, through `sessionfs.ts:appendPolicyBlock` on a first run and
+  `sessionfs.ts:replacePolicyBlock` on `--update` (`index.ts:handleScrubInit` plans
+  both). An update copies the file into the backups root first
+  (`sessionfs.ts:backupFileAside`) and names that path in its report, so the state
+  immediately before the rewrite is always recoverable by hand.
 - **No write follows a symlink.** `sessionfs.ts:refuseNonRegularFile` runs `lstat`
   and refuses anything that exists and is not a regular file, on the backup copy and
   on that `AGENTS.md` append alike. A path that does not exist passes: the caller
@@ -148,7 +151,24 @@ where the mark is both writable and load-bearing (a state-less name resolves no
 verdict, so it would otherwise return to `/scrub:triage`). `policy.test.ts` parses
 the state → verdict rows out of `POLICY_TEMPLATE` and holds them to
 `verdictFromState` for every `STATE` value, so a new state cannot land in the code
-while the block still describes the old vocabulary. Any parse failure or
+while the block still describes the old vocabulary.
+
+**Ownership inside the block** is what makes an automated refresh safe, and it is a
+rule the template states nowhere else — it lives in `policy.ts:planInitUpdate`:
+
+| line inside the markers | owner | `/scrub:init --update` |
+| --- | --- | --- |
+| blank, `#`-comment | template | rewritten |
+| `verdicts:`, `mark-on:` | template | rewritten |
+| `ephemeral-flows:` | **the human** | the value survives verbatim; the key line is re-emitted by the template |
+| anything else non-blank | nobody identified | **refused** by line number, nothing written |
+
+A second `ephemeral-flows:` line is refused the same way the parser unions it: two
+lines of the human's data are not the plugin's to collapse. `--update` therefore
+cannot silently delete a line a project added between the markers — the refusal
+names it and says where to move it.
+
+Any parse failure or
 missing block collapses to `ephemeralFlows: []` (`index.ts:readPolicyConfig`),
 with which no session is ever an ephemeral candidate by flow (REQ-03).
 
@@ -243,7 +263,7 @@ so a restored `trash`-verdicted session is a candidate again on the next audit.
 Non-`.jsonl` files in the trash dir are invisible. No `--all`, no deletion from
 trash, no cross-project restore.
 
-### `/scrub:init` — write the POLICY block once (REQ-08)
+### `/scrub:init` — write the POLICY block, and refresh it (REQ-08)
 
 `index.ts:handleScrubInit` decides with `policy.ts:planInitWrite` and keeps only
 I/O and UI for itself. It reads `<ctx.cwd>/AGENTS.md` (a read throw is treated as
@@ -261,6 +281,32 @@ and the link target is byte-for-byte unchanged. On success it reports
 `Policy block written to AGENTS.md. Fill ephemeral-flows for this project.` The
 template's placeholder `ephemeral-flows: <flow-name-1>, <flow-name-2>` parses as
 empty, so a freshly written block is inert until a human fills it (REQ-03).
+
+**`--update` refreshes a block that already exists** (UD-01…UD-04).
+`index.ts:handleScrubInitUpdate` decides with `policy.ts:planInitUpdate`, which
+locates the region with the same scanner `planInitWrite` uses
+(`policy.ts:findBlockRegion`) and returns one of:
+
+- `append` — no block at all: the append path runs unchanged, with the same message
+  as a first run;
+- `unterminated` — a start with no end: `Policy block starts at line <n> but has no end marker. Fix it by hand. Nothing written.`
+  (the region has no known end, and inventing one deletes the human's text);
+- `foreign` — a line inside the markers the template does not own:
+  `Policy block has a line this template does not own (line <n>: "<text>"). Move it outside the markers. Nothing written.`;
+- `current` — the region already equals the template with the project's flows:
+  `Policy block is already up to date (line <n>). Nothing written.` (so a second run
+  is always a no-op);
+- `update` — the region is rewritten in place, everything outside the markers kept
+  byte-for-byte. `--dry-run` / non-interactive notifies
+  `Dry-run — nothing written. Policy block at line <n> would change:` plus
+  `policy.ts:diffPolicyBlock`'s hunks — `-` leaves, `+` arrives, `  ` is context, and
+  the block's own common head and tail are trimmed; an interior line the update keeps
+  is never shown as a rewrite (the first live trial caught exactly that: three
+  identical lines rendered as a `-`/`+` pair); the TUI confirms `"Update the session-scrub policy block in AGENTS.md?"` with that
+  diff. Accepted, the file is copied into the backups root *before* the write
+  (`sessionfs.ts:backupFileAside`, and a failed backup stops the write), the write
+  goes through `sessionfs.ts:replacePolicyBlock` behind the same §9.6 guard, and the
+  report is `Policy block updated in AGENTS.md (line <n>). Backup: <path>`.
 
 ### `/scrub:triage` — assisted triage (TR-01…TR-13, UX-01…UX-08)
 

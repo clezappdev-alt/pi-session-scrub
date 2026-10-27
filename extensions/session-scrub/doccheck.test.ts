@@ -261,15 +261,51 @@ test("WG-03: /scrub:init writes through appendPolicyBlock, never a bare writeFil
   // The handler needs a Pi host, so its behavior cannot be a unit test — this is the
   // structural net instead. `appendPolicyBlock` is where the `lstat` refusal runs, and a
   // handler that wrote directly would drop the guard with no test noticing.
+  //
+  // The gate follows the write, not the function name: the append moved into a helper so
+  // `/scrub:init` and `--update` on a blockless project share it, and pinning the old
+  // function would have failed while the guard was intact — or passed while it was gone.
   const handler = sourceSlice(INDEX_TS, "async function handleScrubInit(", "\n}\n");
   assert.equal(
     handler.includes("writeFileSync"),
     false,
+    "/scrub:init must not write AGENTS.md itself, in either path",
+  );
+  const append = sourceSlice(INDEX_TS, "async function appendPlannedPolicyBlock(", "\n}\n");
+  assert.equal(
+    append.includes("writeFileSync"),
+    false,
     "/scrub:init must write AGENTS.md through appendPolicyBlock, not writeFileSync",
   );
   assert.ok(
-    handler.includes("appendPolicyBlock("),
+    append.includes("appendPolicyBlock("),
     "/scrub:init must write the policy block through appendPolicyBlock",
+  );
+});
+
+// --- UD-02: the --update write goes through replacePolicyBlock ---
+
+test("UD-02: /scrub:init --update writes through replacePolicyBlock, behind the same guard", () => {
+  // Same reasoning as WG-03: `replacePolicyBlock` is where `refuseNonRegularFile` runs.
+  // An update path that called `writeFileSync` directly would rewrite a symlinked
+  // AGENTS.md at its target, which is the §9.6 refusal this plugin already paid for.
+  const update = sourceSlice(INDEX_TS, "async function handleScrubInitUpdate(", "\n}\n");
+  assert.equal(
+    update.includes("writeFileSync"),
+    false,
+    "the update path must not write AGENTS.md directly",
+  );
+  assert.ok(
+    update.includes("replacePolicyBlock("),
+    "the update path must write through replacePolicyBlock",
+  );
+  // A backup that is attempted after the write reports damage instead of preventing it.
+  const backedUp = update.indexOf("backupFileAside(");
+  const wrote = update.indexOf("replacePolicyBlock(");
+  assert.notEqual(backedUp, -1, "the update must back the file up before rewriting it");
+  assert.ok(
+    backedUp < wrote,
+    "the backup must be taken before the write, or it holds the new bytes",
   );
 });
 

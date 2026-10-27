@@ -77,6 +77,23 @@ export function refuseNonRegularFile(path: string, label: string): void {
 }
 
 /**
+ * Copy a file aside before writing to it, and return the backup path.
+ *
+ * The generic copy: `backupSessionFile` is one caller, `/scrub:init --update` is the
+ * other, and the label is passed in because the §9.6 refusal has to name what it
+ * refused. Called before every write, so the existing backup is overwritten each time:
+ * it always holds the state immediately before the most recent write, which is the one
+ * worth restoring. Keeping older copies would need a rotation policy this does not have.
+ */
+export function backupFileAside(filePath: string, backupDir: string, label: string): string {
+  refuseNonRegularFile(filePath, label);
+  mkdirSync(backupDir, { recursive: true });
+  const backupPath = backupPathFor(filePath, backupDir);
+  copyFileSync(filePath, backupPath);
+  return backupPath;
+}
+
+/**
  * Copy a session file aside before writing to it, and return the backup path.
  *
  * Called before every write, so the existing backup is overwritten each time: it always
@@ -84,11 +101,7 @@ export function refuseNonRegularFile(path: string, label: string): void {
  * restoring. Keeping older copies would need a rotation policy this does not have.
  */
 export function backupSessionFile(sessionPath: string, backupDir: string): string {
-  refuseNonRegularFile(sessionPath, "the session file");
-  mkdirSync(backupDir, { recursive: true });
-  const backupPath = backupPathFor(sessionPath, backupDir);
-  copyFileSync(sessionPath, backupPath);
-  return backupPath;
+  return backupFileAside(sessionPath, backupDir, "the session file");
 }
 
 /**
@@ -175,4 +188,17 @@ export function appendPolicyBlock(
 ): void {
   refuseNonRegularFile(agentsPath, "AGENTS.md");
   writeFileSync(agentsPath, `${existingText}${blockText}`);
+}
+
+/**
+ * `/scrub:init --update`'s write, behind the same §9.6 guard.
+ *
+ * The whole file is passed in, already planned by `policy.ts:planInitUpdate`: the
+ * command never splices text at the filesystem. `writeFileSync` truncates and rewrites,
+ * so the guard has to run before it — after it would be a report about a write that
+ * already happened.
+ */
+export function replacePolicyBlock(agentsPath: string, text: string): void {
+  refuseNonRegularFile(agentsPath, "AGENTS.md");
+  writeFileSync(agentsPath, text);
 }

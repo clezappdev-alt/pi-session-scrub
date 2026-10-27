@@ -88,7 +88,7 @@ reach for a command, not by importance:
 | When | Command | What it does |
 | :--- | :--- | :--- |
 | **Once per project** | `/scrub:adopt [--apply]` | Give sessions from before the naming convention a state prefix. Never rewrites the text after it |
-| | `/scrub:init [--dry-run]` | Append the opt-in policy block to the project's `AGENTS.md`. Idempotent, and refuses if a block is already there |
+| | `/scrub:init [--dry-run] [--update]` | Append the opt-in policy block to the project's `AGENTS.md`. A first run appends and refuses when a block is already there; `--update` refreshes that block to the current template, showing the diff and keeping your `ephemeral-flows:` |
 | **When the list has grown** | `/scrub:audit` | Read-only table of this project's sessions: which are live, named, kept, or actionable. Never mutates, never prompts |
 | | `/scrub:triage [--apply …]` | Assisted triage: read-only digest packs, your judgment in chat, then verdicts written with per-item confirmation |
 | | `/scrub:apply [--dry-run]` | Move the actionable ones to the trash, one confirmation per session |
@@ -112,7 +112,8 @@ Flags and edge cases per command, with examples: [`docs/guide.md`](docs/guide.md
 
 The plugin injects nothing into the model's context, so the agent will not reach for its
 two tools unless something tells it to: **you, in chat**, or **the project's policy block**,
-written once with `/scrub:init`.
+written with `/scrub:init` and refreshed with `/scrub:init --update` when the template
+changes.
 
 | Tool | What it does |
 | :--- | :--- |
@@ -156,7 +157,7 @@ is in [`docs/guide.md` §6](docs/guide.md).
 | writes | the same files | one appended entry per name, verdict or handoff seed — never a rewrite |
 | writes | `<pi-runtime>/session-scrub-backups/--<project>--/` | a byte-for-byte copy taken immediately before each write |
 | writes | `<pi-runtime>/session-scrub-trash/--<project>--/` | sessions moved out of Pi's directory by `/scrub:apply` |
-| writes | `<project>/AGENTS.md` | only on `/scrub:init`, appending one delimited block |
+| writes | `<project>/AGENTS.md` | only on `/scrub:init`: one delimited block appended, or that block replaced by `--update` after a copy lands in the backups root |
 
 **No network. No `child_process`. No `eval`.** Moves are `rename`, so a restored session
 keeps its inode and mtime. Nothing is ever purged — and because the trash holds ordinary

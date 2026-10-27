@@ -44,10 +44,12 @@ import {
   getTrashDir,
   getBackupDir,
   backupPathFor,
+  backupFileAside,
   backupSessionFile,
   snapshotFile,
   freshnessOf,
   appendPolicyBlock,
+  replacePolicyBlock,
   moveToTrash,
   moveFromTrash,
 } from "./sessionfs.ts";
@@ -60,6 +62,7 @@ import {
 import { uniqueAbbreviations, abbrevOf, idFromFilename } from "./ids.ts";
 import {
   parsePolicyBlock,
+  planInitUpdate,
   planInitWrite,
   type PolicyConfig,
 } from "./policy.ts";
@@ -475,6 +478,14 @@ async function handleScrubInit(args: string, ctx: ExtensionCommandContext): Prom
   } catch {
     existing = "";
   }
+  // `--update` is the same command on purpose: the command that writes the block is the
+  // one that refreshes it, so there is no second entry point to discover or to keep in
+  // sync. Without a block it IS a first run — the planner says so and the append path
+  // below runs unchanged.
+  if (args.includes("--update")) {
+    await handleScrubInitUpdate(agentsPath, existing, args, ctx);
+    return;
+  }
   const plan = planInitWrite(existing);
   // The refusal names the line so the human can find (and edit) the block;
   // a fenced quote of the template in these docs does not count as a block.
@@ -485,9 +496,26 @@ async function handleScrubInit(args: string, ctx: ExtensionCommandContext): Prom
     );
     return;
   }
+  await appendPlannedPolicyBlock(agentsPath, existing, plan.text, args, ctx);
+}
+
+/**
+ * The append every write-once path shares: show the exact bytes, ask, write guarded.
+ *
+ * `/scrub:init` and `/scrub:init --update` on a project with no block must behave
+ * identically — a block created by `--update` is the same block, with the same message,
+ * and a divergence here would be the sort of near-duplicate that drifts.
+ */
+async function appendPlannedPolicyBlock(
+  agentsPath: string,
+  existing: string,
+  text: string,
+  args: string,
+  ctx: ExtensionCommandContext,
+): Promise<void> {
   if (resolveDryRun(args, ctx)) {
     ctx.ui.notify(
-      `Dry-run — nothing written. Would append to AGENTS.md:\n${plan.text}`,
+      `Dry-run — nothing written. Would append to AGENTS.md:\n${text}`,
       "info",
     );
     return;
@@ -495,7 +523,7 @@ async function handleScrubInit(args: string, ctx: ExtensionCommandContext): Prom
   // Interactive path: show the exact bytes first, then confirm.
   const ok = await ctx.ui.confirm(
     "Write the session-scrub policy block to AGENTS.md?",
-    `Appends:\n${plan.text}`,
+    `Appends:\n${text}`,
   );
   if (!ok) {
     ctx.ui.notify("Nothing written.", "info");
@@ -504,7 +532,7 @@ async function handleScrubInit(args: string, ctx: ExtensionCommandContext): Prom
   // A failed write is notified, never thrown (PB-04): every other error path
   // in this plugin notifies, and zero mutation must stay observable.
   try {
-    appendPolicyBlock(agentsPath, existing, plan.text);
+    appendPolicyBlock(agentsPath, existing, text);
   } catch (err) {
     ctx.ui.notify(`Could not write AGENTS.md: ${errorMessage(err)}`, "warning");
     return;
@@ -513,6 +541,95 @@ async function handleScrubInit(args: string, ctx: ExtensionCommandContext): Prom
     "Policy block written to AGENTS.md. Fill ephemeral-flows for this project.",
     "info",
   );
+}
+
+/**
+ * `/scrub:init --update` — refresh the block a project already has (UD-01…UD-04).
+ *
+ * The block used to be write-once, so a template fix could only reach an existing
+ * project by hand — and on 2026-10-27 it did not reach it at all: the rename rule was
+ * corrected in the template and copied into `AGENTS.md` manually, and any other project
+ * would have kept obeying the stale copy forever. `policy.ts:planInitUpdate` decides;
+ * this function does I/O, the confirmation and the tone.
+ */
+async function handleScrubInitUpdate(
+  agentsPath: string,
+  existing: string,
+  args: string,
+  ctx: ExtensionCommandContext,
+): Promise<void> {
+  const plan = planInitUpdate(existing);
+  switch (plan.kind) {
+    case "append":
+      await appendPlannedPolicyBlock(agentsPath, existing, plan.text, args, ctx);
+      return;
+    case "unterminated":
+      // No known end means no known region: repairing it would mean guessing where the
+      // human's block stops, and a guess here deletes their text.
+      ctx.ui.notify(
+        `Policy block starts at line ${plan.line} but has no end marker. Fix it by hand. ` +
+          `Nothing written.`,
+        "warning",
+      );
+      return;
+    case "foreign":
+      ctx.ui.notify(
+        `Policy block has a line this template does not own (line ${plan.line}: "${plan.text}"). ` +
+          `Move it outside the markers. Nothing written.`,
+        "warning",
+      );
+      return;
+    case "current":
+      ctx.ui.notify(
+        `Policy block is already up to date (line ${plan.line}). Nothing written.`,
+        "info",
+      );
+      return;
+    case "update": {
+      if (resolveDryRun(args, ctx)) {
+        ctx.ui.notify(
+          `Dry-run — nothing written. Policy block at line ${plan.line} would change:\n${plan.diff}`,
+          "info",
+        );
+        return;
+      }
+      const ok = await ctx.ui.confirm(
+        "Update the session-scrub policy block in AGENTS.md?",
+        `Line ${plan.line}:\n${plan.diff}`,
+      );
+      if (!ok) {
+        ctx.ui.notify("Nothing written.", "info");
+        return;
+      }
+      // Backup first, and a failed backup stops the write: this rewrites a file the
+      // project owns, and a refusal after the write would be a report about damage.
+      let backupPath: string;
+      try {
+        backupPath = backupFileAside(
+          agentsPath,
+          getBackupDir(ctx.sessionManager.getSessionDir()),
+          "AGENTS.md",
+        );
+      } catch (err) {
+        ctx.ui.notify(
+          `Could not back up AGENTS.md: ${errorMessage(err)}. Nothing written.`,
+          "warning",
+        );
+        return;
+      }
+      try {
+        replacePolicyBlock(agentsPath, plan.text);
+      } catch (err) {
+        ctx.ui.notify(`Could not write AGENTS.md: ${errorMessage(err)}`, "warning");
+        return;
+      }
+      ctx.ui.notify(
+        `Policy block updated in AGENTS.md (line ${plan.line}). Backup: ${backupPath}`,
+        "info",
+      );
+      return;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

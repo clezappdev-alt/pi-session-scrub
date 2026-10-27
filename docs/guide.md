@@ -108,7 +108,7 @@ Todos son explícitos. Ninguno corre solo.
 | `/scrub:triage --apply …` | Fase 2: aplica tus juicios y renombres, con `confirm` por ítem. | ver §3.1 | veredictos, nombres |
 | `/scrub:apply` | Mueve a la basura lo accionable. Dry-run primero, `confirm` por ítem. | `--dry-run` | basura |
 | `/scrub:restore` | Lista lo que está en la basura y lo devuelve, con `confirm` por ítem. | **ninguno** (ver §3.3) | sesiones restauradas |
-| `/scrub:init` | Escribe el bloque de política `session-scrub` en el `AGENTS.md` del proyecto, una sola vez. | — | `AGENTS.md` |
+| `/scrub:init` | Escribe el bloque de política `session-scrub` en el `AGENTS.md` del proyecto; con `--update` lo refresca cuando la plantilla cambió. | `--dry-run`, `--update` | `AGENTS.md` |
 | `/scrub:adopt` | Aplica la convención de nombres a sesiones viejas, sin tocar el texto humano. | `--apply`, `id:estado` | nombres + backups |
 | `/scrub:handoff` | Crea la continuación que esta sesión prometió. | — (un texto libre = pendiente) | una sesión nueva, ver §6 |
 
@@ -140,9 +140,13 @@ Escribe un bloque delimitado en `<proyecto>/AGENTS.md` con instrucciones para el
 (cuándo marcar) y los flujos efímeros del proyecto. Sólo una clave la lee el código:
 `ephemeral-flows:`. El resto es guía para humanos y para el agente.
 
-Se escribe **una vez**: si el marcador de inicio ya existe en cualquier parte del archivo,
-el comando no actualiza ni fusiona y avisa que ya existe. Sin bloque, el plugin usa
-defaults conservadores: no infiere flujos efímeros.
+La primera vez lo **agrega**; si el marcador de inicio ya existe, el comando te avisa en qué
+línea está y no toca nada — para refrescarlo está `--update`: muestra el diff (sólo las líneas
+que cambian), pide confirmación y copia `AGENTS.md` a `session-scrub-backups` antes de
+escribir. Tus flujos de `ephemeral-flows:` sobreviven siempre, porque son datos tuyos y no de
+la plantilla; si dentro de los marcadores hay una línea que la plantilla no reconoce, el
+comando se niega y te dice cuál — movela afuera de los marcadores y volvé a correr. Sin
+bloque, el plugin usa defaults conservadores: no infiere flujos efímeros.
 
 El agente lee ese bloque como orden permanente, y una de sus reglas depende del nombre. Al
 renombrar con `/name` se marca `keep`, pero **sólo si el nombre nuevo no declara estado**. Si
