@@ -360,6 +360,88 @@ test("the citation check catches a missing file, a line past the end, and a blan
   assert.deepEqual(staleCitations([at("real.ts", 3)], read), ["real.ts:3 lands on a blank line"]);
 });
 
+// --- Glossary citations II: the symbol must sit on the line it cites --------
+//
+// The check above proves a citation lands on a real, non-blank line. It does not
+// prove the line says what the term claims, and that gap hid ten rotted citations
+// at once: the row said `` `formatAuditLine`, `index.ts:216` `` and line 216 was
+// `}`. Green suite, wrong document, for however long it had been wrong.
+//
+// The bar is still modest: when the document writes `` `symbol`, `file.ts:line` `` —
+// the form it uses for most terms — the cited line must contain that symbol.
+// Citations with no symbol keep the existence-only check above. That is the cheap
+// half of the semantic question, and it is the half the drift actually hit.
+
+/** `` `symbol`, `file.ts:line` `` — the symbol-bearing citation form. */
+const SYMBOL_CITATION_RE = /`([A-Za-z_][A-Za-z0-9_]*)`,\s*`([A-Za-z0-9_-]+\.ts):(\d{1,6})\b/g;
+
+type SymbolCitation = { symbol: string; file: string; line: number; raw: string };
+
+function extractSymbolCitations(text: string): SymbolCitation[] {
+  return [...text.matchAll(SYMBOL_CITATION_RE)].map((m) => ({
+    symbol: m[1],
+    file: m[2],
+    line: Number(m[3]),
+    raw: m[0],
+  }));
+}
+
+/**
+ * Symbol citations whose cited line does not contain the symbol they name.
+ *
+ * A file that cannot be read, or a line past the end, is left to the existence
+ * check above instead of being reported twice.
+ */
+function danglingSymbols(
+  citations: SymbolCitation[],
+  readSource: (file: string) => string | undefined,
+): string[] {
+  const problems: string[] = [];
+  for (const c of citations) {
+    const source = readSource(c.file);
+    if (source === undefined) continue;
+    const line = source.split("\n")[c.line - 1];
+    if (line === undefined) continue;
+    if (!line.includes(c.symbol)) {
+      problems.push(
+        `${c.symbol} is cited at ${c.file}:${c.line} but that line says: ${line.trim().slice(0, 70)}`,
+      );
+    }
+  }
+  return problems;
+}
+
+test("glossary citations: a cited line contains the symbol it is cited for", () => {
+  const citations = extractSymbolCitations(GLOSSARY_MD);
+  // A parser that finds nothing reports every citation correct. Pin the premise.
+  assert.ok(citations.length > 0, "no symbol-bearing citation was parsed in docs/glossary.md");
+
+  const dangling = danglingSymbols(citations, (file) => {
+    try {
+      return readFileSync(join(HERE, file), "utf8");
+    } catch {
+      return undefined;
+    }
+  });
+
+  assert.deepEqual(dangling, [], `dangling citations in docs/glossary.md — ${dangling.join("; ")}`);
+});
+
+test("the symbol check catches a line that no longer names the symbol", () => {
+  // Both directions, so the check above cannot pass by rejecting everything.
+  const sources = new Map([["real.ts", "export function kept() {}\n}"]]);
+  const read = (file: string) => sources.get(file);
+  const at = (symbol: string, line: number): SymbolCitation => ({
+    symbol,
+    file: "real.ts",
+    line,
+    raw: `\`${symbol}\`, \`real.ts:${line}\``,
+  });
+
+  assert.deepEqual(danglingSymbols([at("kept", 1)], read), []);
+  assert.equal(danglingSymbols([at("kept", 2)], read).length, 1);
+});
+
 // --- README anchor ------------------------------------------------------------
 //
 // `docs/behavior.md` declares the tag it reflects and the test above compares it

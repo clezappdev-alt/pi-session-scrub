@@ -7,7 +7,9 @@ una explicación.
 
 **Regla de este documento:** un término por línea, y cada uno dice **dónde vive en el código**
 (`archivo:línea`). Si un término no tiene un lugar en el código, no entra: así no puede
-mentir sin que se note. Cuando el código se mueva, la línea queda vieja y se ve.
+mentir sin que se note. Cuando el código se mueva, la línea queda vieja y se ve — y
+`doccheck.test.ts` verifica que la línea citada exista **y contenga el símbolo** que el
+término nombra.
 
 ---
 
@@ -34,7 +36,7 @@ proyecto.
 ## 2. Clasificación del audit
 
 Cada sesión cae en **un** `kind` (`classify.ts:41`), y el audit lo imprime con un token fijo
-(`formatAuditLine`, `index.ts:216`).
+(`formatAuditLine`, `index.ts:163`).
 
 | `kind` | Token en el audit | Qué significa | Dónde |
 | --- | --- | --- | --- |
@@ -62,45 +64,45 @@ nombre**: por eso P8 se clasifica `candidate` aunque tenga nombre (`classify.ts:
 | --- | --- | --- |
 | `explicit-trash` | Alguien escribió el veredicto `trash`. | `classify.ts:172`, `classify.ts:181` |
 | `finished` | El veredicto `finished` la marcó como terminada. | `classify.ts:188` |
-| `ephemeral` | Invocó un flujo declarado en `ephemeral-flows` (política del proyecto). | `classify.ts:195`, `index.ts:183` |
+| `ephemeral` | Invocó un flujo declarado en `ephemeral-flows` (política del proyecto). | `classify.ts:195`, `index.ts:132` |
 | `empty` | No tiene mensajes. | `classify.ts:208` |
 
 **`ephemeral-flows`** es la única clave que el plugin lee de la política: un bloque en
 `AGENTS.md` del proyecto, entre los marcadores `<!-- pi-session-scrub:start -->` y
 `end -->`. Todo lo demás del bloque es guía para el agente, no configuración
-(`parsePolicyBlock`, `index.ts:183`; `readPolicyConfig`, `index.ts:299`).
+(`parsePolicyBlock`, `policy.ts:89`; `readPolicyConfig`, `index.ts:246`).
 
 ---
 
 ## 4. Grados de triage: hecho vs adivinanza
 
-`TRIAGE_GRADE` (`index.ts:811`). Esto es lo que decide **si el plugin sabe o supone**.
+`TRIAGE_GRADE` (`index.ts:809`). Esto es lo que decide **si el plugin sabe o supone**.
 
 | Grado | Qué es | Dónde |
 | --- | --- | --- |
-| **`machine`** (machine keep) | Sesión **nombrada** sin veredicto. El nombre ya declara el estado, así que el plugin **no opina**: propone `keep` como **hecho**, con la rationale `named session — presumed active`. | `index.ts:811`, `index.ts:1430` |
-| **`weak`** | Sesión **sin nombre**. El plugin no puede saber: mira edad y mensajes y **adivina**. | `index.ts:811`, `index.ts:998` |
-| **`judged`** | Ya lo decidió el humano. | `index.ts:811` |
+| **`machine`** (machine keep) | Sesión **nombrada** sin veredicto. El nombre ya declara el estado, así que el plugin **no opina**: propone `keep` como **hecho**, con la rationale `named session — presumed active`. | `index.ts:809`, `index.ts:1430` |
+| **`weak`** | Sesión **sin nombre**. El plugin no puede saber: mira edad y mensajes y **adivina**. | `index.ts:809`, `index.ts:996` |
+| **`judged`** | Ya lo decidió el humano. | `index.ts:809` |
 
 **weak guess** = la adivinanza de una fila `weak`: `finished` si la edad ≥ `MAX_AGE_MS`,
-si no `paused` (`suggestTriageWeak`, `index.ts:998`). Siempre viaja etiquetada
+si no `paused` (`suggestTriageWeak`, `index.ts:996`). Siempre viaja etiquetada
 `(WEAK — judge from head/tail, never auto-confirm)`: es una sugerencia para leer las
 palabras, **nunca** una decisión.
 
 **machine keep** = la fila `machine`. Cuando se confirman en bloque, el veredicto escrito es
 `keep` con la rationale `machine keep, bulk-confirmed <fecha ISO>`
-(`bulkKeepRationale`, `index.ts:1333`).
+(`bulkKeepRationale`, `index.ts:1331`).
 
 **La fila compacta de una machine row no lleva guess.** La fila compacta sólo renderiza
 filas `machine`, y su propuesta es el hecho `keep`; por eso el campo de guess se quitó del
 esquema (`formatCompactRow`, `render.ts:243`; `spec.md` UX-02). El guess vive donde
 corresponde: en el pack de una fila `weak` (`weak-guess:`, `formatDigestPack`,
-`index.ts:1290`).
+`index.ts:1288`).
 
 **Queda una excepción, y es deliberada — no la leas como si el problema estuviera resuelto en
 todos lados.** Bajo `--verbose`, una machine row recibe *además* su pack completo, y ese pack
 todavía renderiza la weak guess junto al hecho `NAMED → keep (machine)`
-(`formatDigestPack(pack, machineFactOf(pack), guessOf(c))`, `index.ts:1457-1461`). Es la misma
+(`formatDigestPack(pack, machineFactOf(pack), guessOf(c))`, `index.ts:1458`). Es la misma
 tensión que la fila compacta ya resolvió, sin resolver en el pack verboso: el hecho y la
 adivinanza aparecen juntos en el mismo bloque. No se cambió porque esa decisión no estaba
 tomada; es deuda registrada, no comportamiento deseado.
@@ -111,11 +113,11 @@ tomada; es deuda registrada, no comportamiento deseado.
 
 | Término | Qué es | Dónde |
 | --- | --- | --- |
-| **pack** (digest pack) | Bloque completo de una sesión: `head` (primeros 300c), `tail` (últimos 300c cronológicos), msgs, edad, created/modified ISO, rationale. | `formatDigestPack`, `index.ts:1290` |
-| **head** / **tail** | Las dos ventanas de texto del pack, 300 caracteres cada una. | `index.ts:818-819` |
+| **pack** (digest pack) | Bloque completo de una sesión: `head` (primeros 300c), `tail` (últimos 300c cronológicos), msgs, edad, created/modified ISO, rationale. | `formatDigestPack`, `index.ts:1288` |
+| **head** / **tail** | Las dos ventanas de texto del pack, 300 caracteres cada una. | `index.ts:816-817` |
 | **fila compacta** | Una línea, formato por defecto para filas `machine`: `<id> · <n>msgs · <d>d · named "<nombre>"\|unnamed · <head≤121>`. El `named "…"` es entrecomillado por el renderer; el `<head>` no lleva comillas propias (sólo se escapan las que traiga adentro). **Sin campo de guess.** | `render.ts:243` |
-| **pack cap** | Máximo 20 packs por corrida; el resto se lista como `deferred`. | `index.ts:820` |
-| **deferred** | Sesiones que no entraron en el cap: sólo ids, sin packs ni guesses. | `index.ts:1464` |
+| **pack cap** | Máximo 20 packs por corrida; el resto se lista como `deferred`. | `index.ts:818` |
+| **deferred** | Sesiones que no entraron en el cap: sólo ids, sin packs ni guesses. | `index.ts:1404`, `index.ts:1462` |
 
 ---
 
@@ -124,7 +126,7 @@ tomada; es deuda registrada, no comportamiento deseado.
 | Término | Qué es | Dónde |
 | --- | --- | --- |
 | **ventana de frescura** | 2 minutos (`120_000` ms). Es la ventana en la que un archivo cuenta como recién escrito. | `FRESH_MTIME_MS`, `adopt.ts:24` |
-| **`fresh`** | Archivo dentro de la ventana. Pide **un prompt por sesión**, con `freshnessWarning`. | `isFresh`, `adopt.ts:106`; `index.ts:1759` |
+| **`fresh`** | Archivo dentro de la ventana. Pide **un prompt por sesión**, con `freshnessWarning`. | `isFresh`, `adopt.ts:106`; `index.ts:1664` |
 | **`settled`** | Archivo fuera de la ventana. Se pliega en **un solo prompt de resumen**. | `planAdoption`, `adopt.ts:159` |
 | **`freshnessWarning`** | El texto que sólo ve una escritura `fresh`: edad en segundos, ruta del backup, y "no hay flag para saltearlo; esperar es el único bypass". | `adopt.ts:277` |
 | **backup** | Copia de los bytes **previos** a la escritura, en `<runtime>/session-scrub-backups/<proyecto>/`. | `getBackupDir`, `sessionfs.ts:42`; `backupPathFor`, `sessionfs.ts:50` |
@@ -162,18 +164,7 @@ pantalla, no es un bug: es otro conjunto.
 
 ---
 
-## 9. Vocabulario de medición (banco de pruebas)
-
-Términos que usamos al medir el plugin en un host real, no al usarlo.
-
-| Término | Qué es |
-| --- | --- |
-| **banco** | `_scrub-fixture`: repo propio dentro del contenedor, con poblaciones de sesiones y un `AGENTS.md` que fija las reglas para que dos corridas sean comparables. |
-| **población** | Una sesión del banco producida para ejercitar un caso puntual (P1…P9), con el resultado esperado escrito de antemano. |
-| **descartable** | Sesión producida durante una medición sólo para escribir sobre ella. Se borra al terminar. |
-| **sonda** | Proyecto temporal (en `/tmp`) con sus propias carpetas de sesiones, basurero y backups, usado para medir un comando destructivo sin tocar el banco. |
-| **copia de rollback** | `cp -a` del directorio de sesiones a `/tmp`, independiente de los backups del plugin. Los backups del plugin son el objeto medido: no pueden ser la única red. |
-
 **`Remaining` no es el total del audit.** El audit cuenta la sesión viva aunque no tenga
 archivo; `Remaining` cuenta lo que devuelve `SessionManager.list` después del movimiento,
-que no la incluye. Son dos preguntas distintas, las dos bien contestadas.
+que no la incluye. Son dos preguntas distintas, las dos bien contestadas
+(`formatTrashResult`, `render.ts:285`).
