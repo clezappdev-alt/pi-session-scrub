@@ -29,10 +29,18 @@ export const POLICY_TEMPLATE = `<!-- pi-session-scrub:start -->
 #   trash     — explicitly condemned; trash candidate even if the session is named.
 #
 # WHEN TO MARK:
-#   session_rename — when this session gets named or renamed (/name), record keep.
+#   session_rename — when this session gets named or renamed (/name), record keep ONLY if the new name declares no state (see PRECEDENCE).
 #   block_close    — when work pauses with intent to resume, record paused.
 #   session_close  — when the work is done, record finished.
 #   ephemeral flow — when the session invokes a flow listed in ephemeral-flows, record ephemeral.
+#
+# PRECEDENCE — the name is the record. A name that starts with a state already IS
+# that session's verdict, so scrub_mark refuses there on purpose: nothing is missing
+# and nothing needs marking. Record a verdict only when the name declares no state.
+# What each state already resolves:
+#   pausa, espera   -> paused
+#   abierto         -> keep
+#   hecho, traspaso -> finished
 #
 # EPHEMERAL FLOWS — the only key the plugin itself reads. Exact skill-flow
 # names as invoked (the name after /skill:), comma-separated. ONLY these
