@@ -699,6 +699,8 @@ The system MUST ship the UX layer as TypeScript strict with const-object verdict
 
 **Source:** `openspec/changes/session-scrub-naming/spec.md` (NM-01…NM-05, written 2026-10-07, never synced) + the delivered chain (PRs #1–#6, merge commits `a01b1ff` … `06309a1`) + `design.md` §"The organizing rule", §Slices. Slices 1–3 above stay normative. The only clauses touched are the two marked SUPERSEDED below, and neither is deleted.
 
+**Provenance of NB-10…NB-16.** They were appended after this slice by two later changes: NB-10…NB-13 by `session-scrub-lineage-marker` (`cffca8b`, 2026-10-26) and NB-14…NB-16 by `session-scrub-two-token-lineage` (`7d63b3c`, 2026-10-26). Neither commit named its change in this file, which is why the two archived deltas looked unsynced; this note is that record.
+
 **Authority caveat — recorded because it is the failure this slice repairs.** The block shipped two kinds of requirement. NM-01…NM-05 were written before execution. Five surfaces were built with **no requirement at all**: `/scrub:adopt`, `/scrub:handoff`, the `scrub_close` tool, display ids, and the triage-set exclusion. For the second group this section specifies **as built from verified source**, which is the only honest source that exists; it does not invent an intent nobody wrote.
 
 **SUPERSEDED clauses (marked in place, not deleted).**
