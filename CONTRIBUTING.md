@@ -69,11 +69,25 @@ and through Pi's own loader.
 ## Branches and commits
 
 - Branch: `<type>/<slug>`, where `type` is one of `feat`, `fix`, `docs`, `chore`,
-  `change`, `refactor`, and `slug` is kebab-case. Branches are short-lived and
-  deleted after merge.
+  `ci`, `test`, `build`, `perf`, `style`, `refactor`, `revert`, and `slug` is
+  kebab-case (`[a-z0-9._-]`). Branches are short-lived and deleted after merge.
+  `change/` is legacy: the branches that carry it predate this list and stay, but
+  nothing new should use it.
 - Commits: [Conventional Commits](https://www.conventionalcommits.org/), English,
   imperative subject. One work unit per commit — code, tests and docs of the same
   behavior together; documentation-only work in its own commit.
+
+## Issue first
+
+Open an issue before the pull request, with the template that fits (`Bug report` or
+`Feature request`). The issue carries the problem the PR claims to solve, and it is
+the thing a stranger can read to decide whether the change is wanted before reading
+the diff.
+
+No approval step is required today: this is a one-maintainer project, and asking a
+single human to approve their own issue is ceremony with no reader. The issue is
+required, the approval is not. That will change the day a second maintainer
+exists — not before.
 
 ## Fork flow
 
@@ -86,8 +100,12 @@ git fetch upstream && git switch -c fix/<slug> upstream/master
 # … work …
 npm run check
 git push -u origin fix/<slug>
-gh pr create --repo clezappdev-alt/pi-session-scrub --fill
+gh pr create --repo clezappdev-alt/pi-session-scrub --web   # the template opens prefilled
 ```
+
+Fill `Closes #N` and keep the sections; then apply the single `type:*` label. The gate
+turns red until both are there, which is the point — it is cheaper to see it now than to
+have a reviewer ask.
 
 ## What a pull request must contain
 
@@ -98,7 +116,26 @@ The template asks for it, and a PR without it is not reviewable:
 - **Verification** — the exact commands you ran and their result.
 - **Risk** — `Risk: none`, or `Risk: item N (reason)` naming an item from the
   list in the template.
-- **`Closes #N`** for the issue it resolves.
+- **`Closes #N`** (closes on merge) or **`Refs #N`** (non-closing) — one of the two.
+- **Exactly one `type:*` label.** The label is the record: it is what the release
+  notes read. A checkbox in the body would be a second writer that can disagree
+  with it.
+
+Three of those are checked by CI (`.github/workflows/pr-check.yml`), so they cannot
+be forgotten: the title, the issue reference, and the single `type:*` label. The
+rest — the diff, the tests, the wording — stays human.
+
+Run the gate locally before opening the PR:
+
+```bash
+node --test .github/scripts/pr-ceremony.test.cjs
+PR_TITLE="fix(scrub): x" PR_BODY="Closes #1" PR_LABELS='[{"name":"type:bug"}]' \
+  node .github/scripts/pr-ceremony.cjs
+```
+
+Size: the advisory budget is ~400 changed lines. Over it, say in the body why the
+change is one PR (a dependency between the pieces, or tests and docs of the same
+behavior), or split it — but never drop tests or docs to fit the number.
 
 The PR title is the Conventional Commit subject. Pull requests that change
 behavior without tests are sent back with a request for the missing test, not
