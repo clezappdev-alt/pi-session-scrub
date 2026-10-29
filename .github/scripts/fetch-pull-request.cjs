@@ -23,7 +23,8 @@ const { execFileSync } = require("node:child_process");
 const { writeFileSync } = require("node:fs");
 
 // The gate is the pure half of this pair; `reasonOf` lives there so a failure reads the same
-// whether the gate or the read produced it.
+// whether the gate or the read produced it. It is imported, not re-exported: one home for the
+// wording, so an edit here cannot silently diverge from the definition.
 const { reasonOf } = require("./pr-ceremony.cjs");
 
 /** Attempts in total, and the wait before attempt n+1 (n × this). */
@@ -87,10 +88,11 @@ function defaultSleep(ms) {
  * @param {object} options
  * @param {string} options.repository `owner/repo`, as `$GITHUB_REPOSITORY` has it.
  * @param {string|number} options.number The pull request number.
- * @param {number} [options.timeoutMs] How long one attempt may take, and
- *   `options.maxBufferBytes` how much it may answer: both bound the default reader. An
- *   injected `gh` owns its own limits, and these then only describe how its failures are
- *   reported.
+ * @param {number} [options.timeoutMs] How long one attempt may take before it is killed.
+ * @param {number} [options.maxBufferBytes] How large one answer may be.
+ *   Both bound the default reader. An injected `gh` owns its own limits, and these then only
+ *   describe how its failures are reported — a failure classified from an injected reader
+ *   names the configured limit, which may not be the one that fired.
  * @param {(args: string[]) => string} [options.gh] The read, injected so it can be tested.
  * @returns {Promise<{ ok: true, json: string } | { ok: false, message: string }>}
  */

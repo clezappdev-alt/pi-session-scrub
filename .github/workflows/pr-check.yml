@@ -53,8 +53,13 @@ jobs:
     # The handoff file is named once, here, and both steps below use this name: the read
     # writes it, the gate reads it. Two spellings of one path are two things to keep in step
     # for no gain.
+    #
+    # `github.workspace`, not `runner.temp`: the `runner` context is not available in
+    # `jobs.<job_id>.env` (only in a step's), so a job-level `${{ runner.temp }}` resolves to
+    # nothing — the read step would get an empty path and every pull request would lose the
+    # gate. The workspace is one of the contexts job-level env does have.
     env:
-      PR_JSON_PATH: ${{ runner.temp }}/pull-request.json
+      PR_JSON_PATH: ${{ github.workspace }}/pull-request.json
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
