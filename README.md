@@ -3,7 +3,7 @@
 Keep your Pi `/resume` list clean, descriptive and honest. Zero tokens by default,
 opt-in commands only, and nothing deleted by surprise.
 
-<img src="https://img.shields.io/badge/status-beta-2F7A6F?style=flat-square" alt="Status: beta"> · `v0.6.1` · MIT · Node `>=22.19.0` · Pi `>=1.2.0`
+<img src="https://img.shields.io/badge/status-beta-2F7A6F?style=flat-square" alt="Status: beta"> · `v0.7.0` · MIT · Node `>=22.19.0` · Pi `>=1.2.0`
 
 [Why](#why) · [Install](#install) · [First ten minutes](#first-ten-minutes) ·
 [Commands](#commands) · [The agent's half](#the-agents-half) ·
@@ -38,7 +38,7 @@ libraries. The floor in `engines` is not the whole story: the
 [security baseline](SECURITY.md#supported-runtime) is higher.
 
 ```bash
-pi install git:github.com/clezappdev-alt/pi-session-scrub@v0.6.1
+pi install git:github.com/clezappdev-alt/pi-session-scrub@v0.7.0
 ```
 
 Then enable it in `pi config` and reload. Install a **tag**, never `master`: a git ref is
@@ -200,7 +200,7 @@ are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Status and license
 
-> Anchored to the released tag `v0.6.1`.
+> Anchored to the released tag `v0.7.0`.
 
 **Beta.** The command surface is usable daily and still changes between minor versions;
 install a tag and read the [`CHANGELOG`](CHANGELOG.md) before updating.
