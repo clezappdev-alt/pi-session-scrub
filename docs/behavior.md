@@ -1,7 +1,7 @@
 # session-scrub — behavior specification (as-built)
 
 **Status:** as-built documentation, derived from source; requirements are cited by ID from the canonical spec and never restated here.
-**Reflects:** anchored to the released tag `v0.6.1`; Layers A–B describe `master` at the `v0.6.1` commit (2026-10-26), which is what that tag releases — everything `v0.6.0` carried (the handoff promise, the bounded result line, and the cell-budgeted call lines), plus the write guards (no write follows a symlink; the restore's overwrite refusal is pinned by a test) and the session discovery fix that makes a custom `--session-dir` the directory both read and written. **Beyond the tag, still unreleased on `master`:** the conditional rename rule and the block's PRECEDENCE section (`session-scrub-mark-on-precedence`), and `/scrub:init --update` (`session-scrub-init-update`) — both documented below because the as-built spec follows the code, and both waiting on the `v0.7.0` tag. The anchor is checked against `git describe --tags` by `doccheck.test.ts`, which is why the unreleased part is named here instead of moving the anchor: the tag has not moved yet, and the whole document is re-reconciled at each new tag, not per commit.
+**Reflects:** anchored to the released tag `v0.6.1`; Layers A–B describe `master` at the `v0.6.1` commit (2026-10-26), which is what that tag releases — everything `v0.6.0` carried (the handoff promise, the bounded result line, and the cell-budgeted call lines), plus the write guards (no write follows a symlink; the restore's overwrite refusal is pinned by a test) and the session discovery fix that makes a custom `--session-dir` the directory both read and written. **Beyond the tag, still unreleased on `master`:** the conditional rename rule and the block's PRECEDENCE section (`session-scrub-mark-on-precedence`), `/scrub:init --update` (`session-scrub-init-update`), and the retention axis (`session-scrub-retention-axis`: a recorded `ephemeral`/`trash` outranks the name, and a candidate row carries its name) — all documented below because the as-built spec follows the code, and all waiting on the `v0.7.0` tag. The anchor is checked against `git describe --tags` by `doccheck.test.ts`, which is why the unreleased part is named here instead of moving the anchor: the tag has not moved yet, and the whole document is re-reconciled at each new tag, not per commit.
 
 ## How to read this document
 
@@ -124,8 +124,11 @@ On `/scrub:triage` and `/scrub:adopt` a bypass-shaped token is refused by name
 
 Verdict reads take the entry with the lexicographically greatest `at`
 (`index.ts:readLatestVerdict`); malformed verdict entries are skipped, never thrown
-on (`index.ts:asVerdictData`). The name is the single carrier and outranks the
-verdict entry (`name.ts:resolveVerdict`, NB-01/NB-02).
+on (`index.ts:asVerdictData`). The name is the single carrier of the continuation
+question and outranks the verdict entry for everything it can answer
+(`name.ts:resolveVerdict`, NB-01/NB-02); `ephemeral` and `trash` are the retention
+axis, which no name can express, so a recorded retention verdict outranks the name
+instead (RA-01, `session-scrub-retention-axis`) and a name never clears one.
 
 ### POLICY keys
 
@@ -144,8 +147,10 @@ lines in the template are agent guidance, parsed by nothing. That guidance carri
 the precedence the code enforces: the name is the record, and a name that starts
 with a state already IS that session's verdict (`name.ts:verdictFromState` —
 `pausa`/`espera` → `paused`, `abierto` → `keep`, `hecho`/`traspaso` → `finished`),
-which is why `scrub_mark` refuses when the name declares a state (NB-02) and why a
-refused mark means nothing needs marking. The `session_rename` rule is therefore
+which is why `scrub_mark` refuses a write the name would override (NB-02, RA-03) and
+why a refused mark means nothing needs marking. That refusal is computed from the
+resolution (`name.ts:writeTakesEffect`), not read off the name: a retention verdict is
+not expressible there, so marking one is accepted even on a named session. The `session_rename` rule is therefore
 conditional: it orders `keep` only for a name that declares no state, the one case
 where the mark is both writable and load-bearing (a state-less name resolves no
 verdict, so it would otherwise return to `/scrub:triage`). `policy.test.ts` parses
@@ -211,13 +216,16 @@ from the basename front, which is the date.
 `index.ts:handleScrub` → `index.ts:auditSessions`. Parses no flag. Lists
 `SessionManager.list(ctx.cwd)`, resolves the live session by path or id
 (`classify.ts:samePath`), reads the policy (`index.ts:readPolicyConfig`), resolves
-each session's verdict through `name.ts:resolveVerdict` (name outranks entry,
-NB-02), matches ephemeral flows over joined user-message texts (skipped for
+each session's verdict through `name.ts:resolveVerdict` (the name outranks the entry
+for every verdict the name can answer, a recorded `ephemeral`/`trash` outranks the name,
+NB-02/RA-01), matches ephemeral flows over joined user-message texts (skipped for
 `trash`), counts conversation turns (`classify.ts:countConversationTurns`), and
 classifies with `classify.ts:classifySession` (REQ-01, NB-07). Decision order:
-live → named (`trash` verdict still candidate, else `named-protected`) →
-`trash`/`finished`/ephemeral candidates → any explicit verdict `kept` (verdict
-precedence, NB-07) → empty `auto-deletable` → turn floor (≥ `MIN_CONVERSATION_TURNS`
+live → retention candidates (`trash` → `explicit-trash`, `ephemeral` → `ephemeral`,
+both tested ABOVE the name, RA-02) → named `named-protected` → unnamed `finished`
+candidate → ephemeral-flow match candidate (below the name on purpose: a text match
+never outranks a human record) → any other explicit verdict `kept` (verdict precedence,
+NB-07) → empty `auto-deletable` → turn floor (≥ `MIN_CONVERSATION_TURNS`
 turns, or an unknown count, is kept) → 7-day `old-needs-confirm` →
 `kept has-content-no-verdict`. When the live session is not listed yet, a synthetic
 `live` row is unshifted, its `created`/`modified` as `now`; its `messageCount` is
@@ -225,7 +233,9 @@ the entry count, not the message count — the one place the two are conflated.
 
 Output is one `notify(info)` with the summary line plus one `index.ts:formatAuditLine`
 per session (`live …`, `kept <id> named "…"`, `auto <id> empty`,
-`trash-candidate <id> reason=<reason>`, `review <id> msgs=… modified=… first="…"`,
+`trash-candidate <id> reason=<reason>[ named "…"]` (`render.ts:formatCandidateLine`:
+the name is there because RA-02 makes a named session reachable as a candidate, and this
+row is the body of the deletion confirm), `review <id> msgs=… modified=… first="…"`,
 `kept <id> <reason>`). Fully idempotent and side-effect free: no write, no
 `mkdirSync`, no confirm, no trash-dir creation. A malformed session file reads as
 `[]` (`index.ts:openSessionEntries`) and classifies as if it had no verdict and no

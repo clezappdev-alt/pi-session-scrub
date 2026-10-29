@@ -345,9 +345,11 @@ antes de que la sesión vieja se convierta en `traspaso:`.
 | Memoria del bloque | el agente, protocolo de cierre | lo único que el handoff lleva como contexto de fondo; su **título** es la línea que se lee |
 | Crear la continuación | **vos**, `/scrub:handoff` | la sesión nueva nombrada y sembrada; esta queda `traspaso:` |
 
-Un detalle que evita una ida y vuelta: no le pidas un veredicto después de que nombró.
-`scrub_mark` se niega cuando el nombre ya declara estado —el nombre es el registro— y te
-manda a `scrub_close`. El orden es nombrar y entregar, no nombrar y marcar.
+Un detalle que evita una ida y vuelta: el veredicto que el nombre ya dice está de más.
+`scrub_mark` rechaza lo que el nombre taparía —`keep` sobre `pausa:`, por ejemplo— y te
+manda a `scrub_close`, porque no tendría efecto. Lo que **sí** podés marcar después de
+nombrar es la retención: `ephemeral` y `trash` no se pueden expresar en el nombre, así
+que el nombre no los tapa y el veredicto sobrevive al cierre.
 
 **2. Nombrás vos y el handoff hace el resto.**
 
