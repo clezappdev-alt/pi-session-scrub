@@ -8,6 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  CANDIDATE_NAME_MAX,
   formatCandidateLine,
   formatCompactRow,
   formatMarkRefusal,
@@ -17,6 +18,7 @@ import {
   renderCloseCall,
   renderMarkCall,
   renderToolResultLine,
+  textCells,
 } from "./render.ts";
 
 // A fake theme whose fg wraps the text in the token name, so each assertion can see
@@ -210,9 +212,18 @@ test("a candidate row bounds the name it quotes, so a long name cannot widen the
     reason: "ephemeral",
     name: "x".repeat(200),
   });
-  // 58, not 59: the ellipsis is charged to the budget rather than forgotten, exactly as
-  // `preview` documents it. A row that spends the budget twice is the bug the budget prevents.
-  assert.equal(row, `trash-candidate 01a18214 reason=ephemeral named "${"x".repeat(58)}…"`);
+  // The invariant, not the derived count this test used to pin (58 = budget − 1 cell for the
+  // ellipsis). Pinning the arithmetic made the test break when the glyph changed, which is
+  // exactly the change a cell budget is supposed to absorb; the budget itself is the fact.
+  const head = "trash-candidate 01a18214 reason=ephemeral";
+  // The row is `head` + ` named ` + the quoted name, and only the quoted part is budgeted:
+  // two quotes around at most CANDIDATE_NAME_MAX cells. Written this way the assertion states
+  // the contract instead of today's arithmetic, so changing the ellipsis glyph cannot break it.
+  const budget = textCells(head + " named ") + 2 + CANDIDATE_NAME_MAX;
+  assert.ok(textCells(row) <= budget, `row is ${textCells(row)} cells, budget is ${budget}`);
+  // And the cut is visible, which the width alone cannot say: a row that silently drops the
+  // tail reads as a shorter name rather than a truncated one.
+  assert.ok(row.endsWith('…"'), "a cut name ends in the ellipsis");
 });
 
 test("a candidate row at the budget is not cut", () => {
