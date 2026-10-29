@@ -24,6 +24,16 @@ permissions:
   contents: read
   pull-requests: read
 
+# One run per pull request at a time, derived from the PR number.
+#
+# Measured 2026-10-29: opening a PR whose label is already applied fires `opened` AND
+# `labeled`, so three consecutive PRs (#48, #50, #52) each got two identical ceremony
+# runs at the same second — the same verdict twice, double the minutes, and a checks
+# list that is harder to read than the rule it enforces.
+concurrency:
+  group: pr-ceremony-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   ceremony:
     runs-on: ubuntu-latest
