@@ -305,6 +305,8 @@ The system MUST implement `/scrub-apply [--dry-run]` so that dry-run (flag or no
 - THEN exactly those 2 files exist under `getTrashDir()` and the re-list count drops by 2.
 
 ### REQ-07 — `/scrub-restore` round-trips trashed sessions
+
+> **MODIFIED (change `session-scrub-write-guards`, 2026-10-27):** the refusal to overwrite an existing target is now pinned by a test that asserts both halves — the refusal and that neither file moves (WG-04); its test did not exist, and it could not exist while the move lived in `index.ts`.
 The system MUST implement `/scrub-restore` listing `getTrashDir()` contents, restoring the user's TUI selection via `moveFromTrash` (never overwriting), notifying the restored count, and documenting the manual `mv` recovery path.
 
 #### Scenario: restore returns a session to audit
@@ -951,3 +953,79 @@ Cross-home listing, LLM naming, migration of historical sessions without confirm
 2. **NS10 handoff writes last** — in a live host, `/scrub:handoff` leaves the destination named `pausa: desde <abbr> · …` and the origin `traspaso: <abbr> · …`, both visible in `/resume`.
 3. **NS11 cancelled handoff writes nothing** — a cancelled switch (another extension returning `cancel`) leaves the origin's name untouched and reports `"scrub:handoff: cancelled, no new session was created."`.
 4. **NS12 close states round-trip** — every `CLOSE_STATES` entry parses back out of its own formatted name, so a state the schema accepts can never land in `/resume` as free text.
+
+## Slice 6 — the four deltas the canonical file had not absorbed (appended by reconciliation 2026-10-29)
+
+**Source:** four changes that were closed and merged while their deltas stayed in
+`openspec/changes/` — `session-scrub-write-guards` (2026-10-27, WG-01…WG-04),
+`session-scrub-init-update` (2026-10-27, UD-01…UD-04), `session-scrub-retention-axis` (2026-10-29,
+RA-01…RA-04) and `session-scrub-line-budget` (2026-10-26, S1…S5). Every clause below was read back
+**against the code**, not copied from its delta: each symbol it names exists in
+`extensions/session-scrub/`, and each message it quotes is asserted by a test.
+
+Why they were owed: `docs/behavior.md` describes all four as built, and this file — the authority a
+reader trusts to know what the product must do — did not. The cost is not cosmetic. A reader of
+REQ-08 could not learn that `--update` exists; a reader of REQ-07 could not learn that no write
+follows a symlink; and the headline of `0.7.0` (a retention verdict surviving the name) was absent
+altogether. This repository already paid for that failure once, when REQ-03 described keys nobody
+reads.
+
+**Where each delta landed.** Nothing is deleted from Slices 1–5; four clauses are corrected in
+place, each under a `MODIFIED` marker above its requirement.
+
+| delta clause | lands in | as |
+| --- | --- | --- |
+| WG-01…WG-03 | **WG-01…WG-03** below | the non-regular-file floor |
+| WG-04 | **WG-04** below + **REQ-07**, in place (MODIFIED) | the restore refusal, now testable and tested |
+| UD-01…UD-04 | **UD-01…UD-04** below | `--update` and block ownership |
+| RA-01 | **NB-02**, in place (MODIFIED) | a retention verdict outranks the name |
+| RA-02 | **REQ-01** and **NB-07**, in place (MODIFIED) | the named-retention sentence and the branch order |
+| RA-03, RA-04 | **RA-03**, **RA-04** below | when `scrub_mark` refuses; the candidate row carries its name |
+| S1–S4 | **LB-01…LB-04** below | one frame budget for every renderer |
+| S5 | **NB-04**, already in place | the `<shortId>` correction |
+
+### WG-01 — No write follows a symlink
+
+`sessionfs.ts:refuseNonRegularFile(path, label)` MUST `lstat` the path and refuse any path that
+exists and is not a regular file, with `refusing to write through <label>: not a regular file
+(<path>)`. `lstat` is the requirement, not an implementation detail: `stat` resolves the link and
+answers about the target, which is the question that must not be asked. A path that does not exist
+MUST pass — the caller decides, and `/scrub:init` creates an absent `AGENTS.md`.
+
+### WG-02 — The backup copy is guarded
+
+`sessionfs.ts:backupFileAside` MUST call `refuseNonRegularFile` before its `copyFileSync` — the only
+copy in the extension. Without it, a symlinked session file turns "back up this file" into "copy any
+readable file into a known place".
+
+#### Scenario: a symlinked session file is never backed up
+- GIVEN a session path that is a symlink to another readable file
+- WHEN the write path asks for a backup
+- THEN it throws `refusing to write through the session file: not a regular file`
+- AND no file is created in the backup directory.
+
+### WG-03 — Both policy writes are guarded
+
+`sessionfs.ts:appendPolicyBlock` and `sessionfs.ts:replacePolicyBlock` MUST call
+`refuseNonRegularFile(agentsPath, "AGENTS.md")` before their `writeFileSync`. The guard runs before
+the write, never after: after it would be a report about a write that already happened. Without it, a
+project whose `AGENTS.md` is a symlink can have the policy block written through it, outside the
+project — by a first run and by `--update` alike, which is why both paths carry it.
+
+#### Scenario: a symlinked project AGENTS.md is never appended
+- GIVEN `<ctx.cwd>/AGENTS.md` is a symlink to a file outside the project
+- WHEN `/scrub:init` is confirmed
+- THEN the write is refused, the command notifies the reason, and the link target is byte-for-byte unchanged.
+
+### WG-04 — A restore refuses an existing target, and a test says so
+
+`sessionfs.ts:moveFromTrash` MUST refuse when the restored path already exists, with `restore target
+already exists: <path>`, and MUST move neither file. `moveToTrash` and `moveFromTrash` live in
+`sessionfs.ts` precisely so this refusal can be a unit test at all; the command's behaviour is
+unchanged — same `mkdirSync`, same `renameSync`, same per-file `Skipped <id>` handling.
+
+#### Scenario: a restore never overwrites
+- GIVEN a trash copy and a file of the same name already in the sessions directory
+- WHEN the restore runs
+- THEN it refuses with `restore target already exists: <path>`
+- AND both files keep their own bytes.
