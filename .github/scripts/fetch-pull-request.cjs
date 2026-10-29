@@ -22,28 +22,59 @@
 const { execFileSync } = require("node:child_process");
 const { writeFileSync } = require("node:fs");
 
+// The gate is the pure half of this pair; `reasonOf` lives there so a failure reads the same
+// whether the gate or the read produced it. It is imported, not re-exported: one home for the
+// wording, so an edit here cannot silently diverge from the definition.
+const { reasonOf } = require("./pr-ceremony.cjs");
+
 /** Attempts in total, and the wait before attempt n+1 (n × this). */
 const ATTEMPTS = 3;
 const BACKOFF_MS = 1000;
 
-/** What a failed read said, in the most useful words available. */
-function reasonOf(err) {
-  if (err instanceof Error) {
-    // `execFileSync` puts the command's own stderr on the error: `gh` says HTTP 502 there,
-    // and that sentence is the only part a maintainer can act on.
-    const stderr = err.stderr === undefined ? "" : String(err.stderr).trim();
-    if (stderr !== "") return stderr;
-    return err.message;
+/**
+ * How long one attempt may take before it is killed.
+ *
+ * Without it, a `gh` that never answers — a black-holed socket, a stalled proxy — keeps this
+ * required check pending until the job-level timeout, with no diagnostic. Fifteen seconds is
+ * not a guess: three reads of one pull request on this repository measured 0.66s, 0.67s and
+ * 0.74s end to end, so the cap sits about twenty times above the latency it must tolerate. A
+ * read that needs more than fifteen seconds is not going to succeed on the next two either.
+ */
+const READ_TIMEOUT_MS = 15_000;
+
+/**
+ * The largest response one pull request may be.
+ *
+ * This is a real limit on what the gate accepts, not boilerplate: a body over the cap fails
+ * the read, so the number is named and reported instead of surfacing as a buffer error from
+ * the child process.
+ */
+const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+
+/** A byte count the way a message should say it: MiB while it is large, bytes when not. */
+function sizeOf(bytes) {
+  return bytes >= 1024 * 1024 ? `${bytes / (1024 * 1024)} MiB` : `${bytes} bytes`;
+}
+
+/** What a failed read says, in the words a maintainer needs to act on it. */
+function readFailure(err, timeoutMs, maxBufferBytes) {
+  // Node reports both of these with an empty stderr and a `spawnSync …` message that names
+  // the syscall rather than the cause, so they are classified before `reasonOf` sees them.
+  if (err && err.code === "ETIMEDOUT") return `the read timed out after ${timeoutMs}ms`;
+  if (err && err.code === "ENOBUFS") {
+    // The cap that applied, not the default one: a caller may set its own.
+    return `the response was larger than the ${sizeOf(maxBufferBytes)} this read accepts`;
   }
-  return String(err);
+  return reasonOf(err);
 }
 
 /** The real read: `gh` with the job's token, from the environment. */
-function readFromApi(args) {
+function readFromApi(args, timeoutMs, maxBufferBytes) {
   return execFileSync("gh", args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    maxBuffer: 32 * 1024 * 1024,
+    maxBuffer: maxBufferBytes,
+    timeout: timeoutMs,
   });
 }
 
@@ -57,13 +88,20 @@ function defaultSleep(ms) {
  * @param {object} options
  * @param {string} options.repository `owner/repo`, as `$GITHUB_REPOSITORY` has it.
  * @param {string|number} options.number The pull request number.
+ * @param {number} [options.timeoutMs] How long one attempt may take before it is killed.
+ * @param {number} [options.maxBufferBytes] How large one answer may be.
+ *   Both bound the default reader. An injected `gh` owns its own limits, and these then only
+ *   describe how its failures are reported — a failure classified from an injected reader
+ *   names the configured limit, which may not be the one that fired.
  * @param {(args: string[]) => string} [options.gh] The read, injected so it can be tested.
  * @returns {Promise<{ ok: true, json: string } | { ok: false, message: string }>}
  */
 async function fetchPullRequest({
   repository,
   number,
-  gh = readFromApi,
+  timeoutMs = READ_TIMEOUT_MS,
+  maxBufferBytes = MAX_RESPONSE_BYTES,
+  gh = (args) => readFromApi(args, timeoutMs, maxBufferBytes),
   attempts = ATTEMPTS,
   backoffMs = BACKOFF_MS,
   sleep = defaultSleep,
@@ -78,7 +116,7 @@ async function fetchPullRequest({
       if (typeof json === "string" && json.trim() !== "") return { ok: true, json };
       reason = "the API returned an empty response";
     } catch (err) {
-      reason = reasonOf(err);
+      reason = readFailure(err, timeoutMs, maxBufferBytes);
     }
     if (attempt < attempts) {
       const delay = backoffMs * attempt;
@@ -99,8 +137,10 @@ async function fetchPullRequest({
 /**
  * `node fetch-pull-request.cjs <owner/repo> <number> <output-file>`
  *
- * One exit code per outcome: 0 when the file was written, 1 when the read failed, 2 for
- * misuse. The caller (the workflow step) is the only thing that has to know.
+ * Exit 0 when the file was written. Exit 1 when the pull request could not be read, **or**
+ * when it was read but the file could not be written — either way the gate has nothing to
+ * check. Exit 2 for misuse (a missing argument), which is a broken call, not a failed read.
+ * The caller (the workflow step) is the only thing that has to know.
  */
 async function main(argv) {
   const [repository, number, output] = argv;
@@ -140,4 +180,12 @@ if (require.main === module) {
   );
 }
 
-module.exports = { fetchPullRequest, reasonOf, ATTEMPTS, BACKOFF_MS };
+module.exports = {
+  fetchPullRequest,
+  readFailure,
+  sizeOf,
+  ATTEMPTS,
+  BACKOFF_MS,
+  READ_TIMEOUT_MS,
+  MAX_RESPONSE_BYTES,
+};

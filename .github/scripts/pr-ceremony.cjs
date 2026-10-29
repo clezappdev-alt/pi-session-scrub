@@ -124,6 +124,23 @@ function checkTypeLabels(raw) {
   };
 }
 
+/**
+ * What a thrown error says, in the most useful words available.
+ *
+ * A child process's own stderr is the only part a maintainer can act on — `gh` says
+ * `HTTP 502` there — so it wins over the generic message Node adds. Shared by the gate and
+ * the network step it feeds: three copies of this idiom would drift apart, and the gate's
+ * failure sentences would stop matching the step's.
+ */
+function reasonOf(err) {
+  if (err instanceof Error) {
+    const stderr = err.stderr === undefined ? "" : String(err.stderr).trim();
+    if (stderr !== "") return stderr;
+    return err.message;
+  }
+  return String(err);
+}
+
 /** The pull request, from the JSON the workflow's read step wrote to `PR_JSON_PATH`. */
 
 const PULL_REQUEST_SHAPE =
@@ -184,10 +201,11 @@ function parsePullRequest(raw) {
       message: `there is no pull request in the file: nothing was read. Expected ${PULL_REQUEST_SHAPE}.`,
     };
   }
-  // A caller that already parsed the file is not forced to serialise it first.
-  if (typeof raw === "object") return toPullRequest(raw);
+  // Objects, and any raw value that is not text: `toPullRequest` names what it got. Treating
+  // a raw scalar as "no text" would report an empty file that was never empty.
+  if (typeof raw !== "string") return toPullRequest(raw);
 
-  const text = typeof raw === "string" ? raw.trim() : "";
+  const text = raw.trim();
   if (text === "") {
     return {
       ok: false,
@@ -198,11 +216,10 @@ function parsePullRequest(raw) {
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
       message:
-        `there is no pull request in the file: it is not valid JSON (${reason}). ` +
+        `there is no pull request in the file: it is not valid JSON (${reasonOf(err)}). ` +
         `Expected ${PULL_REQUEST_SHAPE}.`,
     };
   }
@@ -254,13 +271,13 @@ function readPullRequestInputs() {
   try {
     text = readFileSync(jsonPath, "utf8");
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
       message:
         `there is no pull request in the file: PR_JSON_PATH (${jsonPath}) cannot be read ` +
-        `(${reason}). Expected ${PULL_REQUEST_SHAPE}. The workflow's read step writes it, ` +
-        `and a run that cannot read its own input has not checked the pull request either way.`,
+        `(${reasonOf(err)}). Expected ${PULL_REQUEST_SHAPE}. The workflow's read step writes ` +
+        `it, and a run that cannot read its own input has not checked the pull request ` +
+        `either way.`,
     };
   }
   return parsePullRequest(text);
@@ -288,5 +305,6 @@ module.exports = {
   checkTypeLabels,
   parsePullRequest,
   checkPullRequest,
+  reasonOf,
   TYPES,
 };
