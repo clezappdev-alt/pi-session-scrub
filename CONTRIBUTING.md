@@ -132,8 +132,13 @@ escape hatch is visible here instead of implied. Nobody else can bypass it, whic
 point: the rule the maintainer's own PR #42 skipped is now a rule for everyone.
 
 "Required" also means the check reads the pull request as it is, not as the event that
-triggered it remembered it — the labels come from the API at check time, so a stale
-`opened` payload cannot fail a PR whose label is right there.
+triggered it remembered it: the pull request is read once from the API at check time —
+title, body and labels in the same response — so a stale `opened` payload cannot fail a PR
+whose label is right there, and two sources can never disagree inside one verdict.
+
+That read is the gate's only network call, and it retries three times before it gives up.
+When it does give up the job fails with the gate's message, never passes: a gate that goes
+green on an input it could not read is a merge nobody checked.
 
 Run the gate locally before opening the PR:
 
@@ -141,6 +146,15 @@ Run the gate locally before opening the PR:
 node --test .github/scripts/pr-ceremony.test.cjs
 PR_TITLE="fix(scrub): x" PR_BODY="Closes #1" PR_LABELS='[{"name":"type:bug"}]' \
   node .github/scripts/pr-ceremony.cjs
+```
+
+Those three variables are the local path, with no token and no network. To replay CI
+exactly, write the API's response to a file and point the gate at it — the file wins over
+the variables, which is what makes one instant possible:
+
+```bash
+gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > /tmp/pull-request.json
+PR_JSON_PATH=/tmp/pull-request.json node .github/scripts/pr-ceremony.cjs
 ```
 
 Size: the advisory budget is ~400 changed lines. Over it, say in the body why the
