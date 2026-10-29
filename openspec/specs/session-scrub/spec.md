@@ -1196,3 +1196,77 @@ reach `2 × CANDIDATE_NAME_MAX` — still far below the 283-column frame that ab
 - GIVEN a candidate whose name is wider than 60 cells
 - WHEN the row is formatted
 - THEN the quoted name ends in `…` and the row stays on one line.
+
+### LB-01 — The failure it answers: a line wider than the frame aborts the TUI
+
+Pi aborts the whole TUI when a component returns a line wider than the frame it was given. The result
+line was bounded first (Slice 5, S8); the call lines were not. `renderMarkCall` and `renderCloseCall`
+built their line from a painted tool name, a painted state and a quoted preview, and passed it to a
+component that **ignores `width`**. With the preview capped at 60 cells and a `scrub_close` head of
+roughly 25, an 80-column terminal could still be exceeded — so the crash the result line no longer had
+stayed reachable from the call line.
+
+### LB-02 — The contract: one budget for every renderer
+
+Every renderer in `render.ts` that hands a line to the frame MUST return a line whose visible width —
+measured by `render.ts:textCells`: combining marks 0, ASCII 1, everything else 2 — is at most the
+`width` the host asks for. The rule is one budget shared by the call lines and the result line, so a
+renderer added later inherits it instead of inventing another. The line MUST never be padded to the
+frame and MUST never be more than one line.
+
+### LB-03 — Degradation order: preview first, head last
+
+When the whole line does not fit, the preview MUST be shortened first and then dropped entirely.
+The tool name and the state are what a human needs to know what was called, so they are the last to go;
+only when even the head does not fit is the head cut with the ellipsis. `PREVIEW_OVERHEAD` is charged
+for the quotes and the separating space, so the quoted form fits without arithmetic by the caller.
+`PREVIEW_MAX` (60 cells) stays a **content** budget — a long text cannot crowd the state out on a wide
+terminal — and the frame budget only ever cuts further.
+
+#### Scenario: a narrow frame drops the preview, never the state
+- GIVEN a `scrub_close` call with a 60-cell preview and a frame of 80 columns
+- WHEN the call line renders
+- THEN the state is visible, the preview is shortened or absent, and the line's cell width is at most 80.
+
+#### Scenario: an extremely narrow frame cuts the head
+- GIVEN a frame narrower than the head alone
+- WHEN the call line renders
+- THEN the head is cut with `…` and the line is still at most the requested width.
+
+### LB-04 — The ellipsis is charged to its budget, and the test pins the invariant
+
+`PREVIEW_MAX` and `CANDIDATE_NAME_MAX` are content budgets (60 cells each) and the ellipsis is charged
+to whichever budget is in play, so a truncation never overshoots by the width of `…`. A test MUST
+assert the **invariant** it is protecting — the produced line's cell width against the requested width,
+or `textCells(row) <= head + 2 + CANDIDATE_NAME_MAX` — and not a derived count: a test pinned to a
+number breaks by arithmetic when the glyph changes, and passes when the contract does.
+
+Slice 6 closes the S5 half of the same delta in place: **NB-04**'s `<shortId>` clause was corrected
+against **NB-10** (a population-derived abbreviation, never a fixed eight characters), under a
+`MODIFIED` marker that names `session-scrub-line-budget`.
+
+## Slice-6 out of scope (the four deltas' non-goals, unchanged)
+
+- **Retraction of a retention verdict on a session that is not live.** The path does not exist today:
+  `scrub_mark` writes only the live session, `/scrub-triage` excludes every session with a resolved
+  verdict, and `appendVerdictToOther` refuses `trash` outright. Extending triage would open a measured
+  surface and is a separate change.
+- **No sixth state and no retention marker in a name.** `cerrado:` is `hecho:` with one more syllable,
+  and a marker in the picker would be a second writer of a fact the entry owns — it would go stale on
+  retraction. Measured pressure: an agent already improvised `hecho: cerrado: …`, and the answer is to
+  make the existing state sufficient, not to add a sixth.
+- **No `POLICY_TEMPLATE` change from the retention axis.** The state → verdict table still agrees with
+  `verdictFromState`; MP-02's table test staying green is the signal that the fix landed in the right
+  layer.
+- **No triage grammar, exclusion or row-shape change, and no picker change.** Pi renders
+  `session.name ?? session.firstMessage`; retention stays in `/scrub`, which already lists every
+  session with its verdict.
+- **`--update` merges nothing human.** The diff is the record of what leaves; the human accepts it or
+  does not run the command. No version marker inside the block, and no automatic invocation.
+- **The guards that already held are untouched:** path components through `basename`, the parse → back
+  up → write → verify order, and the trash and backup roots staying outside Pi's `sessions/`. Moving a
+  symlink is not writing through one — `rename` moves the link itself — so the moves keep their
+  behaviour and only the restore refusal is pinned.
+- **Compact rows and digest packs** (`formatCompactRow`, `formatDigestPack`) are rendered by Pi's own
+  text renderer, not components handed a frame, so the width contract does not apply to them. Any
+  re-layout of the call line (multi-line, columns) is out: one line is the contract.
