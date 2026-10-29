@@ -231,6 +231,28 @@ test("NB-03: scrub_close offers CLOSE_STATES and never offers traspaso", () => {
   );
 });
 
+test("RA-03: scrub_mark refuses through writeTakesEffect and keeps its refusal text", () => {
+  // The handler imports the Pi host, so the runner cannot load it; both halves of RA-03 are
+  // therefore pinned as a source slice. The refusal must be COMPUTED from the resolution —
+  // "the name declares a state" refused writes that do take effect — and the sentence the
+  // agent reads must stay byte-identical, because this change alters when it fires and never
+  // what it says.
+  const handler = sourceSlice(INDEX_TS, "async function handleScrubMark(", "\n}\n");
+  assert.match(
+    handler,
+    /writeTakesEffect\(/,
+    "handleScrubMark must decide with name.ts:writeTakesEffect, not by asking whether the name declares a state",
+  );
+  assert.ok(
+    handler.includes("The name is the record; "),
+    "the refusal's first sentence must stay byte-identical",
+  );
+  assert.ok(
+    handler.includes("use scrub_close to change it. Nothing was written."),
+    "the refusal's second sentence must stay byte-identical",
+  );
+});
+
 test("NB-04: the origin's traspaso is written after the destination is named", () => {
   // The promise is the last write. A cancelled newSession must write nothing, and a
   // handoff cannot announce a continuation by rename before the destination exists.

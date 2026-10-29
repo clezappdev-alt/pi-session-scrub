@@ -38,6 +38,22 @@ export const VERDICTS = {
 } as const;
 export type Verdict = (typeof VERDICTS)[keyof typeof VERDICTS];
 
+/**
+ * The two verdicts that answer "is this worth retaining?" rather than "where does what
+ * comes next live?".
+ *
+ * The list lives beside VERDICTS because two modules now depend on the distinction:
+ * `name.ts:resolveVerdict` must not let a name cancel one, and `classifySession` must not
+ * let a name hide one from the candidate set. A second copy would be a second place to
+ * forget a value.
+ */
+export const RETENTION_VERDICTS: readonly Verdict[] = [VERDICTS.ephemeral, VERDICTS.trash];
+
+/** Whether a verdict is a retention claim (see RETENTION_VERDICTS). */
+export function isRetentionVerdict(verdict: Verdict | undefined): boolean {
+  return verdict !== undefined && RETENTION_VERDICTS.includes(verdict);
+}
+
 export const CLASS_KIND = {
   live: "live",
   namedProtected: "named-protected",
@@ -165,22 +181,29 @@ export function classifySession(
   ) {
     return { kind: CLASS_KIND.live };
   }
-  if (s.name !== undefined && s.name.trim().length > 0) {
-    if (verdict === VERDICTS.trash) {
-      return {
-        kind: CLASS_KIND.candidate,
-        reason: CANDIDATE_REASON.explicitTrash,
-        verdict,
-      };
-    }
-    return { kind: CLASS_KIND.namedProtected, name: s.name, verdict };
-  }
+  // Retention outranks the name; the name outranks every heuristic.
+  //
+  // `ephemeral` and `trash` are the retention axis and no name can express either
+  // (`name.ts:verdictFromState` deliberately derives neither), so a name must not hide
+  // one from the candidate set. Measured 2026-10-29: a correctly marked ephemeral session
+  // closed as `hecho:` resolved `finished`, this branch never ran, and the session stayed
+  // named-protected for good — the close destroyed the classification it was recording.
   if (verdict === VERDICTS.trash) {
     return {
       kind: CLASS_KIND.candidate,
       reason: CANDIDATE_REASON.explicitTrash,
       verdict,
     };
+  }
+  if (verdict === VERDICTS.ephemeral) {
+    return {
+      kind: CLASS_KIND.candidate,
+      reason: CANDIDATE_REASON.ephemeral,
+      verdict,
+    };
+  }
+  if (s.name !== undefined && s.name.trim().length > 0) {
+    return { kind: CLASS_KIND.namedProtected, name: s.name, verdict };
   }
   if (verdict === VERDICTS.finished) {
     return {
@@ -189,7 +212,9 @@ export function classifySession(
       verdict,
     };
   }
-  if (verdict === VERDICTS.ephemeral || ephemeralFlow) {
+  // The flow match stays BELOW the name on purpose: it is text evidence, and only human
+  // records (a name, a verdict) may turn a named session into a deletion candidate.
+  if (ephemeralFlow) {
     return {
       kind: CLASS_KIND.candidate,
       reason: CANDIDATE_REASON.ephemeral,

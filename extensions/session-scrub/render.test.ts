@@ -8,6 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  formatCandidateLine,
   formatCompactRow,
   formatRestoreResult,
   formatTrashConfirmBody,
@@ -165,6 +166,37 @@ test("the compact machine row prints unnamed for an absent or blank name", () =>
     head: "h",
   });
   assert.equal(blank, "aabbccdd · 1msgs · 0d · unnamed · h");
+});
+
+// --- Candidate row (RA-04: a deletion consent names the session it deletes) ---
+
+test("a named candidate row carries the name it is about", () => {
+  // RA-02 makes a named session reachable as a candidate for the first time. The confirm
+  // reads `Trash session <shortId>?` with this row as its body, so without the name a human
+  // confirms deleting `hecho: respuesta del Discord entregada` while seeing a hex id.
+  const row = formatCandidateLine({
+    shortId: "01a18214",
+    reason: "ephemeral",
+    name: "hecho: respuesta del Discord entregada",
+  });
+  assert.equal(
+    row,
+    'trash-candidate 01a18214 reason=ephemeral named "hecho: respuesta del Discord entregada"',
+  );
+});
+
+test("an unnamed candidate row is byte-identical to the line the audit already printed", () => {
+  for (const name of [undefined, "", "   "]) {
+    assert.equal(
+      formatCandidateLine({ shortId: "01a18214", reason: "explicit-trash", name }),
+      "trash-candidate 01a18214 reason=explicit-trash",
+    );
+  }
+});
+
+test("a name that could close its own quoting is escaped", () => {
+  const row = formatCandidateLine({ shortId: "aabbccdd", reason: "ephemeral", name: 'a "b" c' });
+  assert.equal(row, 'trash-candidate aabbccdd reason=ephemeral named "a \\"b\\" c"');
 });
 
 test("the compact machine row truncates a head longer than 120 characters to 120 plus the ellipsis, and leaves a head at exactly 120 untouched", () => {

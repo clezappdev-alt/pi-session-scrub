@@ -281,6 +281,32 @@ function sessions(count: number): string {
   return count === 1 ? "1 session" : `${count} sessions`;
 }
 
+/**
+ * One audit row for a session the classifier marked as a disposal candidate (RA-04).
+ *
+ * The reason is the verdict that made it a candidate; the name, when there is one, is the
+ * identification. Both matter here and only here: this row is the body of the per-item
+ * deletion confirm (`Trash session <shortId>?`), and since RA-02 a candidate can be a NAMED
+ * session for the first time — before it, a name always meant named-protected, so a row
+ * never needed to say which name it was about. A hex id alone is not consent to delete
+ * `hecho: respuesta del Discord entregada`.
+ *
+ * An absent or blank name renders exactly the row the audit printed before this existed, so
+ * no unnamed candidate changes shape. The name is quoted through `escapeQuote`, the same
+ * guard `formatCompactRow` uses: a name must not be able to close its own quoting.
+ */
+export function formatCandidateLine(args: {
+  shortId: string;
+  reason: string;
+  name?: string;
+}): string {
+  const head = `trash-candidate ${args.shortId} reason=${args.reason}`;
+  const name = args.name;
+  return name !== undefined && name.trim().length > 0
+    ? `${head} named "${escapeQuote(name)}"`
+    : head;
+}
+
 /** Pluralized post-run line of /scrub-apply (N4): `Trashed <n> session(s). Remaining: <r>.` */
 export function formatTrashResult(count: number, remaining: number): string {
   return `Trashed ${sessions(count)}. Remaining: ${remaining}.`;

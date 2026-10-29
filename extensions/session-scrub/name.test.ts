@@ -17,6 +17,7 @@ import {
   verdictFromState,
   verdictFromName,
   resolveVerdict,
+  writeTakesEffect,
   proposeNameFromTopicKey,
   closeName,
   splitLineage,
@@ -166,6 +167,20 @@ test("the name outranks a verdict entry when both exist", () => {
   assert.equal(resolveVerdict("pausa: falta", "finished"), "paused");
 });
 
+test("a retention verdict outranks the name, whatever state the name declares", () => {
+  // The two carriers answer different questions. The name says where what comes next
+  // lives and can never express "this is not worth retaining" — verdictFromState
+  // deliberately derives neither ephemeral nor trash. One precedence for both axes let a
+  // close bury the mark: `hecho: x` + ephemeral resolved `finished`, the session became
+  // named-protected, and triage never offered it again. Measured 2026-10-29.
+  for (const state of ALL_STATES) {
+    const name = formatName(state, "algo");
+    for (const retention of ["ephemeral", "trash"] as const) {
+      assert.equal(resolveVerdict(name, retention), retention, `${name} + ${retention}`);
+    }
+  }
+});
+
 test("a verdict entry is still honoured when the name declares nothing", () => {
   // Sessions written before the convention exist only as entries. Ignoring those would
   // silently drop every historical verdict.
@@ -186,6 +201,27 @@ test("resolveVerdict never invents a verdict from a name alone", () => {
       `${state} must resolve to a real verdict, got ${verdict}`,
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// writeTakesEffect — NB-02's refusal, computed instead of read off the name
+// ---------------------------------------------------------------------------
+
+test("a write that cannot change the resolution is identified as ineffective", () => {
+  // NB-02 refuses to record "a record that cannot take effect". The judgement was read
+  // off the name ("declares a state => refuse"), which also refused writes that DO take
+  // effect once retention stopped being derivable from a name.
+  assert.equal(writeTakesEffect("pausa: falta el spec", "paused", "keep"), false);
+  assert.equal(writeTakesEffect("hecho: x", "finished", "finished"), false);
+});
+
+test("a write that changes the resolution is effective, named or not", () => {
+  // Marking an ephemeral flow after closing it is the case that used to be impossible:
+  // the name already declared `hecho`, so the refusal fired on a write that resolves
+  // differently — and the order of close and mark decided the outcome.
+  assert.equal(writeTakesEffect("hecho: x", undefined, "ephemeral"), true);
+  assert.equal(writeTakesEffect("hecho: x", "ephemeral", "keep"), true);
+  assert.equal(writeTakesEffect("hecho: x", "ephemeral", "trash"), true);
 });
 
 // ---------------------------------------------------------------------------

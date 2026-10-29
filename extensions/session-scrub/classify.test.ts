@@ -110,6 +110,45 @@ test("named session with trash verdict is an explicit-trash candidate", () => {
   });
 });
 
+test("named session with an ephemeral verdict is a candidate, not protected", () => {
+  // The two carriers answer different questions. An `ephemeral` verdict is a retention
+  // claim that no name can express, so a name must not hide it: before this, closing a
+  // correctly-marked ephemeral session with `hecho:` made it named-protected and the
+  // pipeline never offered it again. Measured 2026-10-29 on a real row,
+  // `hecho: cerrado: respuesta del Discord entregada`.
+  const result = classifySession(
+    session({ name: "hecho: respuesta del Discord entregada" }),
+    NOT_LIVE,
+    VERDICTS.ephemeral,
+    NOT_EPHEMERAL,
+    6,
+  );
+  assert.deepEqual(result, {
+    kind: "candidate",
+    reason: "ephemeral",
+    verdict: VERDICTS.ephemeral,
+  });
+});
+
+test("a flow match never outranks a name", () => {
+  // A heuristic is text evidence; a name is a human record. This is the boundary the
+  // retention hoist must respect: the flow match is evaluated right beside it, and
+  // moving it up too would turn every named session that ever ran an ephemeral flow
+  // into a deletion candidate.
+  const result = classifySession(
+    session({ name: "abierto: sigo con esto" }),
+    NOT_LIVE,
+    NO_VERDICT,
+    true,
+    6,
+  );
+  assert.deepEqual(result, {
+    kind: "named-protected",
+    name: "abierto: sigo con esto",
+    verdict: undefined,
+  });
+});
+
 test("named session with a finished verdict is still named-protected", () => {
   // The interaction that carries the most weight, and the one neither of the tests
   // above reaches. `traspaso:` and `hecho:` both derive a `finished` verdict, and an

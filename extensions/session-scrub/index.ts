@@ -29,7 +29,7 @@ import {
   countConversationTurns,
   samePath,
 } from "./classify.ts";
-import { STATE, CLOSE_STATES, formatName, parseName, closeName, resolveVerdict, splitLineage, type CloseState, type State } from "./name.ts";
+import { STATE, CLOSE_STATES, formatName, parseName, closeName, resolveVerdict, splitLineage, writeTakesEffect, type CloseState, type State } from "./name.ts";
 import {
   verifyAdoption,
   freshnessWarning,
@@ -68,6 +68,7 @@ import {
 } from "./policy.ts";
 import {
   escapeQuote,
+  formatCandidateLine,
   formatCompactRow,
   formatRestoreResult,
   formatTrashConfirmBody,
@@ -175,7 +176,14 @@ function formatAuditLine(a: AuditedSession): string {
     case CLASS_KIND.autoDeletable:
       return `auto ${short} empty`;
     case CLASS_KIND.candidate:
-      return `trash-candidate ${short} reason=${a.classification.reason}`;
+      // RA-02 makes a named session reachable as a candidate for the first time, and this
+      // row is the body of the deletion confirm. The name is what identifies the session a
+      // human is about to trash; the reason is the verdict that condemned it.
+      return formatCandidateLine({
+        shortId: short,
+        reason: a.classification.reason,
+        name: a.info.name,
+      });
     case CLASS_KIND.oldNeedsConfirm: {
       const d = a.classification.detail;
       return `review ${short} msgs=${d.messageCount} modified=${d.modified.toISOString()} first="${d.firstMessage.slice(0, 60)}"`;
@@ -666,12 +674,18 @@ async function handleScrubMark(
   if (!isVerdict(params.verdict)) {
     return toolResult(`Invalid verdict. Use one of: keep, paused, finished, ephemeral, trash.`, false);
   }
-  // The name is the single carrier (see name.ts resolveVerdict). Writing a verdict entry
-  // for a session that already declares a state would leave two records disagreeing, and
-  // the audit would silently prefer the name — so refuse rather than write a record that
-  // cannot take effect.
-  const currentName = ctx.sessionManager.getSessionName();
-  if (parseName(currentName ?? "").state !== undefined) {
+  // The name is the single carrier of the continuation question (see name.ts
+  // resolveVerdict). NB-02 refuses to write "a record that cannot take effect", and that
+  // judgement is COMPUTED from the resolution instead of read off the name: "the name
+  // declares a state" also refused writes that do take effect once retention stopped being
+  // derivable from a name. Marking an ephemeral flow after closing the session was
+  // impossible, so the order of scrub_close and scrub_mark decided the outcome.
+  const currentName = ctx.sessionManager.getSessionName() ?? "";
+  const latestVerdict = readLatestVerdict(ctx.sessionManager.getEntries());
+  if (
+    parseName(currentName).state !== undefined &&
+    !writeTakesEffect(currentName, latestVerdict, params.verdict)
+  ) {
     return toolResult(
       `This session already declares its state as "${currentName}". The name is the record; ` +
         `use scrub_close to change it. Nothing was written.`,
