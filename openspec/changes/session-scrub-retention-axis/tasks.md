@@ -34,6 +34,25 @@ running total past 400. Observed RED→GREEN: `name.test.ts` 47/48 → 50/50, `c
 deliberate RA-03 RED and a glossary citation the header edit displaced), full suite 314 → 317 pass.
 Delivery (push, PR, merge) is the owner's decision and was not taken.
 
+## Post-review advisories (native review `review-7f0edc64867a330a`, approved)
+
+The review closed approved and left five advisory, non-blocking findings. Consequence of the
+approved closure: **the finding texts are not recoverable afterwards** — the frozen candidate
+view is removed, the terminal-consumption receipt records only target/lineage, `inspect-authority`
+exposes no artifact payload, and `review capabilities` offers no artifact-read operation. So the
+three carried below were reconstructed from id + lens + severity + location, which map 1:1 to
+the reviewed tree.
+
+| id | severity | location | carried |
+| --- | --- | --- | --- |
+| R3-1 | SUGGESTION | `render.ts` candidate row | **yes** — the quoted name is now bounded to 60 cells; a name is free text with no bound, and this was the one row in the module without a budget |
+| R3-2 | SUGGESTION | `doccheck.test.ts` RA-03 gate | **yes** — the refusal moved to `render.ts:formatMarkRefusal` and the whole message is asserted; the source gate now checks the handler *calls* it and that the text is not inlined again |
+| R2-002 | SUGGESTION | `classify.ts` retention branches | **yes** — collapsed into `isRetentionVerdict` + `retentionReason`; the predicate now narrows, so no cast |
+| R2-001 | WARNING | `index.ts` mark handler | no — split into `declaredState`/`writeIsInert` and the entry read made lazy; carried in the same commit because it was three lines |
+| R2-003 | SUGGESTION | `render.ts` name alias | no — resolved as a side effect of R3-1's rewrite; a separate styling pass would buy nothing |
+
+Delivered on `fix/retention-axis-advisories`, one code commit plus one meta commit.
+
 ## Notes
 
 - **Why T6 is not a behaviour test.** `handleScrubMark` lives in `index.ts`, which imports the Pi host and cannot be loaded by the runner. Its logic is therefore expressed as `writeTakesEffect` (host-free, T2) and the handler is thin wiring. The message is pinned by source text, the repo's existing pattern for `index.ts` claims.

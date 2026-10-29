@@ -150,7 +150,9 @@ with a state already IS that session's verdict (`name.ts:verdictFromState` —
 which is why `scrub_mark` refuses a write the name would override (NB-02, RA-03) and
 why a refused mark means nothing needs marking. That refusal is computed from the
 resolution (`name.ts:writeTakesEffect`), not read off the name: a retention verdict is
-not expressible there, so marking one is accepted even on a named session. The `session_rename` rule is therefore
+not expressible there, so marking one is accepted even on a named session. Its sentence
+lives in `render.ts:formatMarkRefusal`, so the whole message is asserted instead of a
+fragment of it inlined in the handler. The `session_rename` rule is therefore
 conditional: it orders `keep` only for a name that declares no state, the one case
 where the mark is both writable and load-bearing (a state-less name resolves no
 verdict, so it would otherwise return to `/scrub:triage`). `policy.test.ts` parses
@@ -235,7 +237,9 @@ Output is one `notify(info)` with the summary line plus one `index.ts:formatAudi
 per session (`live …`, `kept <id> named "…"`, `auto <id> empty`,
 `trash-candidate <id> reason=<reason>[ named "…"]` (`render.ts:formatCandidateLine`:
 the name is there because RA-02 makes a named session reachable as a candidate, and this
-row is the body of the deletion confirm), `review <id> msgs=… modified=… first="…"`,
+row is the body of the deletion confirm; the quoted name is bounded to 60 cells, because a
+name is free text a human typed and every row here must stay inside the terminal frame),
+`review <id> msgs=… modified=… first="…"`,
 `kept <id> <reason>`). Fully idempotent and side-effect free: no write, no
 `mkdirSync`, no confirm, no trash-dir creation. A malformed session file reads as
 `[]` (`index.ts:openSessionEntries`) and classifies as if it had no verdict and no
