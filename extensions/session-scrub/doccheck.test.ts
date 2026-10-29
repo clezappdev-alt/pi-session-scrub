@@ -551,6 +551,142 @@ test("the symbol check catches a line that no longer names the symbol", () => {
   assert.equal(danglingSymbols([at("kept", 2)], read).length, 1);
 });
 
+// --- Glossary citations III: a bare number must be self-describing -----------
+//
+// The two checks above still leave one hole, and the hole is where the drift
+// actually happened. `SYMBOL_CITATION_RE` matches one written form —
+// `` `sym`, `file.ts:N` `` — so a citation written `` `SYM` (`file.ts:N`) `` or a
+// table cell that lists bare numbers is checked only for existing on a non-blank
+// line. `TRIAGE_GRADE` was cited four times at `index.ts:809` while it is declared
+// at 945, and the whole `kind` table cited `classify.ts:41`–`47` — six consecutive
+// lines of a doc comment — for six different kinds, because `CLASS_KIND` is
+// declared at 71. Every one of those passed.
+//
+// The rule added here is the cheapest one that is still checkable: a citation is
+// either **token-bearing** (some backticked token precedes it on its line, and the
+// cited line contains that token) or it points at a **declaration** (the line says
+// `const TRIAGE_GRADE = {`, which is a fact a test can verify without a second
+// copy of the line numbers). Anything else must name a token, and naming one is
+// what turns an unverifiable number into a claim.
+//
+// What this does NOT prove, stated because the gate must not oversell itself: a
+// declaration proves the number will not move, not that it is the *right*
+// declaration. §3 of the glossary cited `RETENTION_VERDICTS` for a section about
+// `CANDIDATE_REASON` and passed. The token-bearing form is the one that proves
+// relevance; the declaration form only buys stability.
+
+/** Every backticked span on a line, in order. */
+const SPAN_RE = /`([^`]*)`/g;
+
+/** A span that *is* a citation, and therefore cannot serve as another one's token. */
+const CITATION_SPAN_RE = /^[A-Za-z0-9_-]+\.ts:\d{1,6}(?:-\d{1,6})?$/;
+
+/** `formatDigestPack(pack, …)` -> `formatDigestPack`: the identifier a span opens with. */
+const LEADING_IDENT_RE = /^([A-Za-z_][A-Za-z0-9_]*)/;
+
+/** A line that declares the symbol it names. The declaration IS the anchor. */
+const DECLARATION_RE =
+  /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|const|let|var|class|type|interface|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/;
+
+type AnchoredCitation = {
+  file: string;
+  line: number;
+  /** The token the document offers as the citation's subject, when it names one. */
+  token: string | undefined;
+  raw: string;
+};
+
+/**
+ * The citations on one document line, each paired with the token that precedes it.
+ *
+ * Pairing is positional on purpose: it needs no per-form regex, so the three forms
+ * the glossary actually writes (`\`sym\`, \`f:N\``, `\`SYM\` (\`f:N\`)`,
+ * `\`call(…)\`, \`f:N\``) are all covered by one rule.
+ */
+function anchoredCitations(line: string): AnchoredCitation[] {
+  const spans = [...line.matchAll(SPAN_RE)].map((m) => ({ content: m[1], index: m.index ?? 0 }));
+  const citations: AnchoredCitation[] = [];
+  for (const span of spans) {
+    const citation = /^([A-Za-z0-9_-]+\.ts):(\d{1,6})(?:-(\d{1,6}))?$/.exec(span.content);
+    if (citation === null) continue;
+    const before = spans.filter((s) => s.index < span.index && !CITATION_SPAN_RE.test(s.content));
+    const nearest = before[before.length - 1];
+    citations.push({
+      file: citation[1],
+      line: Number(citation[2]),
+      token: nearest === undefined ? undefined : (LEADING_IDENT_RE.exec(nearest.content)?.[1] ?? undefined),
+      raw: `\`${span.content}\``,
+    });
+  }
+  return citations;
+}
+
+/**
+ * Citations that are neither token-bearing nor anchored to a declaration.
+ *
+ * A file that cannot be read, or a line past the end, is left to the existence
+ * check above instead of being reported twice.
+ */
+function unanchoredCitations(
+  line: string,
+  readSource: (file: string) => string | undefined,
+): string[] {
+  const problems: string[] = [];
+  for (const c of anchoredCitations(line)) {
+    const source = readSource(c.file);
+    if (source === undefined) continue;
+    const text = source.split("\n")[c.line - 1];
+    if (text === undefined) continue;
+    if (c.token !== undefined && text.includes(c.token)) continue;
+    const declares = DECLARATION_RE.exec(text)?.[1];
+    if (declares !== undefined) continue;
+    problems.push(
+      `${c.raw} at ${c.file}:${c.line} is not anchored — ` +
+        (c.token === undefined
+          ? "no token precedes it"
+          : `its token \`${c.token}\` does not appear on that line`) +
+        `, and the line declares nothing: ${text.trim().slice(0, 70)}`,
+    );
+  }
+  return problems;
+}
+
+const readGlossarySource = (file: string): string | undefined => {
+  try {
+    return readFileSync(join(HERE, file), "utf8");
+  } catch {
+    return undefined;
+  }
+};
+
+test("glossary citations: every citation names a token its line contains, or points at a declaration", () => {
+  const problems = GLOSSARY_MD.split("\n").flatMap((line) => unanchoredCitations(line, readGlossarySource));
+  // A checker that finds nothing to check reports every document correct. Pin the premise.
+  const checked = GLOSSARY_MD.split("\n").flatMap(anchoredCitations).length;
+  assert.ok(checked > 0, "no citation was parsed in docs/glossary.md");
+  assert.deepEqual(
+    problems,
+    [],
+    `unanchored citations in docs/glossary.md — ${problems.join("; ")}`,
+  );
+});
+
+test("the anchoring check catches a bare number and a token its line does not contain", () => {
+  const sources = new Map([
+    ["real.ts", "const DECLARED = 1;\nusage(DECLARED);\n// prose\n"],
+  ]);
+  const read = (file: string) => sources.get(file);
+
+  // Declared there: the line is its own anchor.
+  assert.deepEqual(unanchoredCitations("`real.ts:1`", read), []);
+  // A token the line contains: anchored.
+  assert.deepEqual(unanchoredCitations("`DECLARED` (`real.ts:2`)", read), []);
+  // A token the line does not contain, and no declaration: reported.
+  assert.equal(unanchoredCitations("`DECLARED` (`real.ts:3`)", read).length, 1);
+  // No token at all, and no declaration: reported.
+  assert.equal(unanchoredCitations("| row | `real.ts:3` |", read).length, 1);
+});
+
 // --- README anchor ------------------------------------------------------------
 //
 // `docs/behavior.md` declares the tag it reflects and the test above compares it

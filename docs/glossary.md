@@ -35,37 +35,39 @@ proyecto.
 
 ## 2. Clasificación del audit
 
-Cada sesión cae en **un** `kind` (`classify.ts:41`), y el audit lo imprime con un token fijo
+Cada sesión cae en **un** `kind` (`classify.ts:71`), y el audit lo imprime con un token fijo
 (`formatAuditLine`, `index.ts:168`).
 
 | `kind` | Token en el audit | Qué significa | Dónde |
 | --- | --- | --- | --- |
-| `live` | `live` | La sesión que corre el comando. Nunca se toca. | `classify.ts:42` |
-| `named-protected` | `kept … named "…"` | Tiene nombre y no tiene veredicto `trash`: el nombre la protege. | `classify.ts:43` |
-| `auto-deletable` | `auto … empty` | Sin mensajes: no hay nada que perder. | `classify.ts:44` |
-| `candidate` | `trash-candidate … reason=` | Tiene **señal** para tirarla (ver §3). | `classify.ts:45` |
-| `old-needs-confirm` | `review …` | ≥ 7 días, sin veredicto, por debajo del piso de turnos. | `classify.ts:46` |
-| `kept` | `kept … <motivo>` | Protegida por contenido, por el piso de turnos o por ser joven. | `classify.ts:47` |
+| `live` | `live` | La sesión que corre el comando. Nunca se toca. | `classify.ts:72` |
+| `named-protected` | `kept … named "…"` | Tiene nombre y ningún veredicto de **retención** (`trash`, `ephemeral`): el nombre la protege. | `namedProtected`, `classify.ts:73` |
+| `auto-deletable` | `auto … empty` | Sin mensajes: no hay nada que perder. | `autoDeletable`, `classify.ts:74` |
+| `candidate` | `trash-candidate … reason=` | Tiene **señal** para tirarla (ver §3). | `candidate`, `classify.ts:75` |
+| `old-needs-confirm` | `review …` | ≥ 7 días, sin veredicto, por debajo del piso de turnos. | `oldNeedsConfirm`, `classify.ts:76` |
+| `kept` | `kept … <motivo>` | Protegida por contenido, por el piso de turnos o por ser joven. | `kept`, `classify.ts:77` |
 
 Ojo con el token vs el `kind`: el `kind` `candidate` se imprime como **`trash-candidate`**, y
 `old-needs-confirm` se imprime como **`review`**. Los nombres no coinciden.
 
 **`named` no es un `kind`.** Es un calificador que aparece detrás del token cuando la sesión
-tiene nombre (`kept 01a14ce0-37 named "hecho: …"`). Y **un veredicto `trash` le gana al
-nombre**: por eso P8 se clasifica `candidate` aunque tenga nombre (`classify.ts:169-176`).
+tiene nombre (`kept 01a14ce0-37 named "hecho: …"`). Y **un veredicto de retención le gana al
+nombre**: `trash` y `ephemeral` son la otra escala, y el nombre no puede expresar ninguno de los
+dos, así que la retención se resuelve **antes** de mirar el nombre. Por eso P8 se clasifica
+`candidate` aunque tenga nombre (`isRetentionVerdict`, `classify.ts:62`; `candidate`, `classify.ts:207`).
 
 ---
 
 ## 3. Los cuatro `reason` de una candidata
 
-`classify.ts:50`. Es el **porqué** de que una sesión esté en la lista de tirables.
+`CANDIDATE_REASON`, `classify.ts:80`. Es el **porqué** de que una sesión esté en la lista de tirables.
 
 | `reason` | Por qué | Dónde |
 | --- | --- | --- |
-| `explicit-trash` | Alguien escribió el veredicto `trash`. | `classify.ts:172`, `classify.ts:181` |
-| `finished` | El veredicto `finished` la marcó como terminada. | `classify.ts:188` |
-| `ephemeral` | Invocó un flujo declarado en `ephemeral-flows` (política del proyecto). | `classify.ts:195`, `index.ts:132` |
-| `empty` | No tiene mensajes. | `classify.ts:208` |
+| `explicit-trash` | Alguien escribió el veredicto `trash`. | `explicitTrash`, `classify.ts:81`; `trash`, `classify.ts:68` |
+| `finished` | El veredicto `finished` la marcó como terminada. | `classify.ts:218` |
+| `ephemeral` | Invocó un flujo declarado en `ephemeral-flows` (política del proyecto). | `classify.ts:227`, `index.ts:132` |
+| `empty` | No tiene mensajes. | `classify.ts:240` |
 
 **`ephemeral-flows`** es la única clave que la extensión lee de la política: un bloque en
 `AGENTS.md` del proyecto, entre los marcadores `<!-- pi-session-scrub:start -->` y
@@ -80,7 +82,7 @@ nombre**: por eso P8 se clasifica `candidate` aunque tenga nombre (`classify.ts:
 
 | Grado | Qué es | Dónde |
 | --- | --- | --- |
-| **`machine`** (machine keep) | Sesión **nombrada** sin veredicto. El nombre ya declara el estado, así que la extensión **no opina**: propone `keep` como **hecho**, con la rationale `named session — presumed active`. | `index.ts:945`, `index.ts:1430` |
+| **`machine`** (machine keep) | Sesión **nombrada** sin veredicto. El nombre ya declara el estado, así que la extensión **no opina**: propone `keep` como **hecho**, con la rationale `named session — presumed active`. | `index.ts:945`, `index.ts:1568` |
 | **`weak`** | Sesión **sin nombre**. La extensión no puede saber: mira edad y mensajes y **adivina**. | `index.ts:945`, `index.ts:1132` |
 | **`judged`** | Ya lo decidió el humano. | `index.ts:945` |
 
@@ -102,7 +104,7 @@ corresponde: en el pack de una fila `weak` (`weak-guess:`, `formatDigestPack`,
 **Queda una excepción, y es deliberada — no la leas como si el problema estuviera resuelto en
 todos lados.** Bajo `--verbose`, una machine row recibe *además* su pack completo, y ese pack
 todavía renderiza la weak guess junto al hecho `NAMED → keep (machine)`
-(`formatDigestPack(pack, machineFactOf(pack), guessOf(c))`, `index.ts:1458`). Es la misma
+(`formatDigestPack(pack, machineFactOf(pack), guessOf(c))`, `index.ts:1594`). Es la misma
 tensión que la fila compacta ya resolvió, sin resolver en el pack verboso: el hecho y la
 adivinanza aparecen juntos en el mismo bloque. No se cambió porque esa decisión no estaba
 tomada; es deuda registrada, no comportamiento deseado.
@@ -114,10 +116,10 @@ tomada; es deuda registrada, no comportamiento deseado.
 | Término | Qué es | Dónde |
 | --- | --- | --- |
 | **pack** (digest pack) | Bloque completo de una sesión: `head` (primeros 300c), `tail` (últimos 300c cronológicos), msgs, edad, created/modified ISO, rationale. | `formatDigestPack`, `index.ts:1424` |
-| **head** / **tail** | Las dos ventanas de texto del pack, 300 caracteres cada una. | `index.ts:816-817` |
+| **head** / **tail** | Las dos ventanas de texto del pack, 300 caracteres cada una. | `HEAD_DIGEST_CHARS`, `index.ts:952`; `TAIL_DIGEST_CHARS`, `index.ts:953` |
 | **fila compacta** | Una línea, formato por defecto para filas `machine`: `<id> · <n>msgs · <d>d · named "<nombre>"\|unnamed · <head≤121>`. El `named "…"` es entrecomillado por el renderer; el `<head>` no lleva comillas propias (sólo se escapan las que traiga adentro). **Sin campo de guess.** | `render.ts:255` |
-| **pack cap** | Máximo 20 packs por corrida; el resto se lista como `deferred`. | `index.ts:818` |
-| **deferred** | Sesiones que no entraron en el cap: sólo ids, sin packs ni guesses. | `index.ts:1579`, `index.ts:1598` |
+| **pack cap** | Máximo 20 packs por corrida; el resto se lista como `deferred`. | `index.ts:954` |
+| **deferred** | Sesiones que no entraron en el cap: sólo ids, sin packs ni guesses. | `deferred`, `index.ts:1540`; `index.ts:1598` |
 
 ---
 
@@ -126,7 +128,7 @@ tomada; es deuda registrada, no comportamiento deseado.
 | Término | Qué es | Dónde |
 | --- | --- | --- |
 | **ventana de frescura** | 2 minutos (`120_000` ms). Es la ventana en la que un archivo cuenta como recién escrito. | `FRESH_MTIME_MS`, `adopt.ts:24` |
-| **`fresh`** | Archivo dentro de la ventana. Pide **un prompt por sesión**, con `freshnessWarning`. | `isFresh`, `adopt.ts:106`; `index.ts:1664` |
+| **`fresh`** | Archivo dentro de la ventana. Pide **un prompt por sesión**, con `freshnessWarning`. | `isFresh`, `adopt.ts:106`; `freshnessWarning`, `index.ts:1999` |
 | **`settled`** | Archivo fuera de la ventana. Se pliega en **un solo prompt de resumen**. | `planAdoption`, `adopt.ts:159` |
 | **`freshnessWarning`** | El texto que sólo ve una escritura `fresh`: edad en segundos, ruta del backup, y "no hay flag para saltearlo; esperar es el único bypass". | `adopt.ts:277` |
 | **backup** | Copia de los bytes **previos** a la escritura, en `<runtime>/session-scrub-backups/<proyecto>/`. | `getBackupDir`, `sessionfs.ts:42`; `backupPathFor`, `sessionfs.ts:50` |
@@ -144,7 +146,7 @@ Este es el error que costó una corrida entera de medición. Hay **tres** "modif
 
 | Marca | Dónde vive | Quién la lee |
 | --- | --- | --- |
-| **`mtime`** | Filesystem, el `stat` del archivo | La **ventana de 2 minutos** de la escritura (`sessionfs.ts:89`, `adopt.ts:106`). Se toca con `touch`. |
+| **`mtime`** | Filesystem, el `stat` del archivo | La **ventana de 2 minutos** de la escritura (`sessionfs.ts:133`, `adopt.ts:106`). Se toca con `touch`. |
 | **`created`** | ISO `timestamp` del header **y** el nombre del archivo | La **compuerta de 7 días** → `to review` (`MAX_AGE_MS`, `classify.ts:19`). `touch` **no** la cambia. |
 | **`modified`** | Numérico `message.timestamp` (epoch ms) dentro de cada mensaje | Sólo **display**, en audit y triage. No decide nada. |
 
