@@ -35,8 +35,9 @@ const BACKOFF_MS = 1000;
  *
  * Without it, a `gh` that never answers — a black-holed socket, a stalled proxy — keeps this
  * required check pending until the job-level timeout, with no diagnostic. Fifteen seconds is
- * generous for one pull request: an attempt that needs more is not going to succeed on the
- * next two either.
+ * not a guess: three reads of one pull request on this repository measured 0.66s, 0.67s and
+ * 0.74s end to end, so the cap sits about twenty times above the latency it must tolerate. A
+ * read that needs more than fifteen seconds is not going to succeed on the next two either.
  */
 const READ_TIMEOUT_MS = 15_000;
 
@@ -49,23 +50,29 @@ const READ_TIMEOUT_MS = 15_000;
  */
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 
+/** A byte count the way a message should say it: MiB while it is large, bytes when not. */
+function sizeOf(bytes) {
+  return bytes >= 1024 * 1024 ? `${bytes / (1024 * 1024)} MiB` : `${bytes} bytes`;
+}
+
 /** What a failed read says, in the words a maintainer needs to act on it. */
-function readFailure(err, timeoutMs) {
+function readFailure(err, timeoutMs, maxBufferBytes) {
   // Node reports both of these with an empty stderr and a `spawnSync …` message that names
   // the syscall rather than the cause, so they are classified before `reasonOf` sees them.
   if (err && err.code === "ETIMEDOUT") return `the read timed out after ${timeoutMs}ms`;
   if (err && err.code === "ENOBUFS") {
-    return `the response was larger than the ${MAX_RESPONSE_BYTES / 1024 / 1024} MiB this read accepts`;
+    // The cap that applied, not the default one: a caller may set its own.
+    return `the response was larger than the ${sizeOf(maxBufferBytes)} this read accepts`;
   }
   return reasonOf(err);
 }
 
 /** The real read: `gh` with the job's token, from the environment. */
-function readFromApi(args, timeoutMs) {
+function readFromApi(args, timeoutMs, maxBufferBytes) {
   return execFileSync("gh", args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    maxBuffer: MAX_RESPONSE_BYTES,
+    maxBuffer: maxBufferBytes,
     timeout: timeoutMs,
   });
 }
@@ -80,15 +87,19 @@ function defaultSleep(ms) {
  * @param {object} options
  * @param {string} options.repository `owner/repo`, as `$GITHUB_REPOSITORY` has it.
  * @param {string|number} options.number The pull request number.
+ * @param {number} [options.timeoutMs] How long one attempt may take, and
+ *   `options.maxBufferBytes` how much it may answer: both bound the default reader. An
+ *   injected `gh` owns its own limits, and these then only describe how its failures are
+ *   reported.
  * @param {(args: string[]) => string} [options.gh] The read, injected so it can be tested.
- * @param {number} [options.timeoutMs] How long one attempt may take before it is killed.
  * @returns {Promise<{ ok: true, json: string } | { ok: false, message: string }>}
  */
 async function fetchPullRequest({
   repository,
   number,
   timeoutMs = READ_TIMEOUT_MS,
-  gh = (args) => readFromApi(args, timeoutMs),
+  maxBufferBytes = MAX_RESPONSE_BYTES,
+  gh = (args) => readFromApi(args, timeoutMs, maxBufferBytes),
   attempts = ATTEMPTS,
   backoffMs = BACKOFF_MS,
   sleep = defaultSleep,
@@ -103,7 +114,7 @@ async function fetchPullRequest({
       if (typeof json === "string" && json.trim() !== "") return { ok: true, json };
       reason = "the API returned an empty response";
     } catch (err) {
-      reason = readFailure(err, timeoutMs);
+      reason = readFailure(err, timeoutMs, maxBufferBytes);
     }
     if (attempt < attempts) {
       const delay = backoffMs * attempt;
@@ -167,4 +178,12 @@ if (require.main === module) {
   );
 }
 
-module.exports = { fetchPullRequest, readFailure, reasonOf, ATTEMPTS, BACKOFF_MS, READ_TIMEOUT_MS, MAX_RESPONSE_BYTES };
+module.exports = {
+  fetchPullRequest,
+  readFailure,
+  sizeOf,
+  ATTEMPTS,
+  BACKOFF_MS,
+  READ_TIMEOUT_MS,
+  MAX_RESPONSE_BYTES,
+};

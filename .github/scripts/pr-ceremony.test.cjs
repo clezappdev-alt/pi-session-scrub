@@ -278,6 +278,13 @@ function runGate(env) {
   });
 }
 
+/** How many green checks the gate printed. */
+function greenCount(stdout) {
+  // `?? []`: a gate that prints no green at all is the regression these assertions guard
+  // against, and `.match` would answer `null` — a TypeError instead of the stdout shown.
+  return (stdout.match(/✅/g) ?? []).length;
+}
+
 function withTempDir(run) {
   const dir = mkdtempSync(join(tmpdir(), "pr-ceremony-"));
   try {
@@ -300,9 +307,7 @@ test("the file wins over the environment, so a stale payload cannot outvote it",
     });
   });
   assert.equal(run.status, 0, run.stdout + run.stderr);
-  // `?? []`: a gate that prints no green at all is the regression these guard against,
-  // and `.match` would answer `null` — a TypeError instead of the stdout being shown.
-  assert.equal((run.stdout.match(/✅/g) ?? []).length, 3, run.stdout);
+  assert.equal(greenCount(run.stdout), 3, run.stdout);
 });
 
 test("a file that fails the ceremony fails the gate, with the gate's message", () => {
@@ -334,9 +339,7 @@ test("a local run with no file reads the three variables, as before", () => {
     PR_LABELS: '[{"name":"type:bug"}]',
   });
   assert.equal(run.status, 0, run.stdout + run.stderr);
-  // `?? []`: a gate that prints no green at all is the regression these guard against,
-  // and `.match` would answer `null` — a TypeError instead of the stdout being shown.
-  assert.equal((run.stdout.match(/✅/g) ?? []).length, 3, run.stdout);
+  assert.equal(greenCount(run.stdout), 3, run.stdout);
 });
 
 // ---------------------------------------------------------------------------
@@ -496,15 +499,20 @@ test("an empty answer is a failure, not an empty file", async () => {
 });
 
 test("a response bigger than the read accepts says so, not just that it failed", async () => {
-  const result = await fetchPullRequest({
-    ...FETCH_ARGS,
-    attempts: 1,
-    gh: () => {
-      throw Object.assign(new Error("spawnSync gh ENOBUFS"), { code: "ENOBUFS" });
-    },
+  // A real child that floods stdout past a real cap: the code and the empty stderr are
+  // observed here, not assumed from an error object built to match.
+  const result = await withAsyncGhStub(`#!/bin/sh\nyes 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n`, async (_dir, bin) => {
+    const saved = process.env.PATH;
+    process.env.PATH = `${bin}:${saved}`;
+    try {
+      return await fetchPullRequest({...FETCH_ARGS, attempts: 1, maxBufferBytes: 1024});
+    } finally {
+      process.env.PATH = saved;
+    }
   });
   assert.equal(result.ok, false);
-  assert.match(result.message, /larger than the 32 MiB/);
+  // The cap that applied, not the default one: 1 KiB here, 32 MiB in CI.
+  assert.match(result.message, /larger than the 1024 bytes/);
   // The child process's own words are not a diagnosis a maintainer can act on.
   assert.doesNotMatch(result.message, /spawnSync/);
 });
@@ -528,14 +536,8 @@ test("a read that hangs is killed, and the failure names how long it waited", as
     const saved = process.env.PATH;
     process.env.PATH = `${bin}:${saved}`;
     try {
-      return await fetchPullRequest({
-        ...FETCH_ARGS,
-        attempts: 1,
-        timeoutMs: 200,
-        sleep: async () => {
-          throw new Error("a timed-out read must not also back off");
-        },
-      });
+      // One attempt, so the backoff branch is never reached: this test is about the kill.
+      return await fetchPullRequest({...FETCH_ARGS, attempts: 1, timeoutMs: 200});
     } finally {
       process.env.PATH = saved;
     }
