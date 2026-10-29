@@ -53,7 +53,7 @@ const COMPACT_HEAD_MAX = 120;
  * 60 cells matches `name.ts:MAX_TEXT`, so the row is as wide as the name the convention
  * would have proposed.
  */
-const CANDIDATE_NAME_MAX = 60;
+export const CANDIDATE_NAME_MAX = 60;
 
 /** Escape backslashes and double quotes so the value cannot close its own quoting. */
 export function escapeQuote(text: string): string {
@@ -84,8 +84,8 @@ function cellWidth(codePoint: number): number {
   return codePoint < 0x80 ? 1 : 2;
 }
 
-/** Cells a whole string occupies, under the same conservative rule. */
-function textCells(text: string): number {
+/** Cells a whole string occupies, under the same conservative rule (combining marks 0, ASCII 1, everything else 2). */
+export function textCells(text: string): number {
   let total = 0;
   for (const ch of text) {
     total += cellWidth(ch.codePointAt(0) ?? 0);

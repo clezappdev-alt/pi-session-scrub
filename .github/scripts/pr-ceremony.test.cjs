@@ -14,7 +14,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { checkTitle, parseIssueRefs, checkTypeLabels } = require("./pr-ceremony.cjs");
+const { checkTitle, parseIssueRefs, checkTypeLabels, parseLabels } = require("./pr-ceremony.cjs");
 
 // ---------------------------------------------------------------------------
 // checkTitle — Conventional Commits
@@ -146,4 +146,48 @@ test("an empty or bare type label does not count as one", () => {
 test("labels may arrive as objects with a name, as the API returns them", () => {
   assert.equal(checkTypeLabels([{ name: "type:feature" }]).ok, true);
   assert.equal(checkTypeLabels([{ name: "type:feature" }, { name: "type:bug" }]).ok, false);
+});
+
+// --- Reading the labels the workflow hands over ------------------------------
+//
+// `PR_LABELS` arrives as JSON text from `toJSON(github.event.pull_request.labels)`.
+// The CLI block used `JSON.parse(process.env.PR_LABELS || "[]")` directly, so a
+// payload that was not valid JSON killed the gate with a stack trace — a red run
+// that says nothing about the pull request, which is the worst way for a gate to
+// fail when its whole purpose is to explain itself. Native review of the gate
+// itself marked it WARNING (R3-001).
+
+test("labels are read from the JSON the workflow passes, and no payload is no labels", () => {
+  assert.deepEqual(parseLabels("[]"), { ok: true, labels: [] });
+  assert.deepEqual(parseLabels(undefined), { ok: true, labels: [] });
+  assert.deepEqual(parseLabels("  "), { ok: true, labels: [] });
+  assert.deepEqual(parseLabels('[{"name":"type:bug"}]'), {
+    ok: true,
+    labels: [{ name: "type:bug" }],
+  });
+  // A caller that already has the array is not forced to serialise it first.
+  assert.deepEqual(parseLabels([{ name: "type:bug" }]), { ok: true, labels: [{ name: "type:bug" }] });
+});
+
+test("a label payload that is not JSON is a gate failure with a message, never a throw", () => {
+  const result = parseLabels("type:bug, type:docs");
+  assert.equal(result.ok, false);
+  assert.match(result.message, /PR_LABELS is not valid JSON/);
+  assert.doesNotThrow(() => parseLabels("{"));
+});
+
+test("a label payload that is JSON but not an array is refused by name", () => {
+  const object = parseLabels('{"name":"type:bug"}');
+  assert.equal(object.ok, false);
+  assert.match(object.message, /not an array of labels/);
+
+  const nullPayload = parseLabels("null");
+  assert.equal(nullPayload.ok, false);
+  assert.match(nullPayload.message, /got null/);
+});
+
+test("the type-label check reports a malformed payload instead of failing on it", () => {
+  const result = checkTypeLabels("{oops");
+  assert.equal(result.ok, false);
+  assert.match(result.message, /PR_LABELS is not valid JSON/);
 });

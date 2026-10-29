@@ -9,7 +9,9 @@
 # it runs on label and title edits too: the label arrives after the body.
 #
 # The checks live in `.github/scripts/pr-ceremony.cjs` and are pinned by its own tests, so the
-# gate can be read, corrected in a pull request, and reproduced locally:
+# gate can be read, corrected in a pull request, and reproduced locally. The labels come from
+# the API at check time, never from the event payload, so they are the labels the pull request
+# has now:
 #
 #   node --test .github/scripts/pr-ceremony.test.cjs
 #   PR_TITLE="fix(scrub): x" PR_BODY="Closes #1" PR_LABELS='[{"name":"type:bug"}]' \
@@ -23,6 +25,17 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  issues: read
+
+# One run per pull request at a time, derived from the PR number.
+#
+# Measured 2026-10-29: opening a PR whose label is already applied fires `opened` AND
+# `labeled`, so three consecutive PRs (#48, #50, #52) each got two identical ceremony
+# runs at the same second — the same verdict twice, double the minutes, and a checks
+# list that is harder to read than the rule it enforces.
+concurrency:
+  group: pr-ceremony-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   ceremony:
@@ -41,9 +54,21 @@ jobs:
       - name: The gate's own tests
         run: node --test .github/scripts/pr-ceremony.test.cjs
 
+      # The labels are read from the API, not from the event payload.
+      #
+      # `gh pr create --label type:bug` sends the label in the creation call, and the `opened`
+      # event still arrives with `labels: []`. Measured on #54: the gate failed its own pull
+      # request with "found 0 type:* label(s)" while `type:bug` was on the PR the whole time.
+      # The question this gate answers is "does this pull request have exactly one type label
+      # right now", and only the API answers that; the payload answers "what did the labels
+      # look like when this event was built", which is a different and less useful question.
       - name: Check this pull request
         env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
-          PR_LABELS: ${{ toJSON(github.event.pull_request.labels) }}
-        run: node .github/scripts/pr-ceremony.cjs
+        run: |
+          PR_LABELS="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels" --jq 'map({name})')"
+          export PR_LABELS
+          node .github/scripts/pr-ceremony.cjs

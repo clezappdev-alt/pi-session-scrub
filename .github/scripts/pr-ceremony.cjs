@@ -56,9 +56,53 @@ function parseIssueRefs(body) {
   return refs;
 }
 
+/**
+ * The pull request's labels, from the JSON text the workflow passes or from an array.
+ *
+ * `PR_LABELS` is `toJSON(github.event.pull_request.labels)` — a string, because that is
+ * all an env var can be. Parsing it inline made a malformed payload throw a stack trace
+ * out of the gate: a red run that says nothing about the pull request, when explaining
+ * itself is the entire job. A payload the gate cannot read is reported as a failure of
+ * the gate's own input, which is what it is.
+ *
+ * @returns {{ ok: true, labels: unknown[] } | { ok: false, message: string }}
+ */
+function parseLabels(raw) {
+  if (Array.isArray(raw)) return { ok: true, labels: raw };
+  const text = typeof raw === "string" ? raw.trim() : "";
+  // An absent payload is the local run: no labels to check, and the other two checks
+  // still report. Refusing here would make the gate unusable off CI.
+  if (text === "") return { ok: true, labels: [] };
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      message:
+        `PR_LABELS is not valid JSON (${reason}), so the type label cannot be read. ` +
+        `The workflow passes toJSON(github.event.pull_request.labels): a malformed ` +
+        `payload is a workflow defect, not a pull request one.`,
+    };
+  }
+  if (!Array.isArray(parsed)) {
+    return {
+      ok: false,
+      message:
+        `PR_LABELS is JSON but not an array of labels (got ` +
+        `${parsed === null ? "null" : typeof parsed}). It comes from ` +
+        `toJSON(github.event.pull_request.labels), which is always an array.`,
+    };
+  }
+  return { ok: true, labels: parsed };
+}
+
 /** Whether the labels carry exactly one `type:*` with a value. */
-function checkTypeLabels(labels) {
-  const names = (Array.isArray(labels) ? labels : [])
+function checkTypeLabels(raw) {
+  const parsed = parseLabels(raw);
+  if (!parsed.ok) return parsed;
+  const names = parsed.labels
     .map((label) => (typeof label === "string" ? label : label && label.name))
     .filter((name) => typeof name === "string");
   const typeLabels = names.filter((name) => /^type:\S/.test(name.trim()));
@@ -100,7 +144,8 @@ if (require.main === module) {
   const results = checkPullRequest({
     title: process.env.PR_TITLE,
     body: process.env.PR_BODY,
-    labels: JSON.parse(process.env.PR_LABELS || "[]"),
+    // Raw: `checkTypeLabels` parses it, so one function owns "read the labels".
+    labels: process.env.PR_LABELS,
   });
   for (const result of results) {
     console.log(`${result.ok ? "✅" : "❌"} ${result.message}`);
@@ -112,4 +157,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { checkTitle, parseIssueRefs, checkTypeLabels, checkPullRequest, TYPES };
+module.exports = { checkTitle, parseIssueRefs, parseLabels, checkTypeLabels, checkPullRequest, TYPES };
