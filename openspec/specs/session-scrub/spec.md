@@ -320,6 +320,13 @@ The system MUST implement `/scrub-restore` listing `getTrashDir()` contents, res
 > `--dry-run` and non-interactive dry-run, previews the exact text it would append, confirms
 > in the TUI, refuses by naming the existing block's line, and notifies a write failure
 > instead of rejecting outward (PB-03, PB-04).
+
+> **MODIFIED (change `session-scrub-init-update`, 2026-10-27):** `/scrub:init` gains `--update`, which
+> refreshes an existing block instead of refusing forever, under an ownership rule that decides what
+> may change and what stops the update (UD-01…UD-04). A project that already carries a block could
+> not receive a template fix any other way, and the only workaround was a hand edit — which is the
+> bug this closes: the stale copy looks authoritative, the agent obeys it, and nothing compares it to
+> the template.
 The system MUST implement `/scrub-init` creating/updating project-local AGENTS.md idempotently with the delimited generic commented template (taxonomy + when-to-mark guidance + `verdicts:`/`mark-on:`/`ephemeral-flows:` keys with placeholders), never duplicating an existing block.
 
 #### Scenario: second init is a no-op
@@ -1029,3 +1036,93 @@ unchanged — same `mkdirSync`, same `renameSync`, same per-file `Skipped <id>` 
 - WHEN the restore runs
 - THEN it refuses with `restore target already exists: <path>`
 - AND both files keep their own bytes.
+
+### UD-01 — `--update` refreshes the region, and ownership decides what may change
+
+`/scrub:init --update` MUST locate the block exactly as the parser does — the first unfenced
+`POLICY_START` and the first unfenced `POLICY_END` after it (PB-01, PB-02; `policy.ts:findBlockRegion`,
+the scanner `planInitWrite` shares) — and MUST replace everything between the markers with the current
+`POLICY_TEMPLATE`. Which lines inside the region may change is decided by ownership, not by what looks
+stale:
+
+| line inside the markers | owner | what `--update` does |
+| --- | --- | --- |
+| blank | template | rewritten |
+| `#`-comment (the guidance prose) | template | rewritten |
+| `verdicts:` , `mark-on:` | template | rewritten |
+| `ephemeral-flows:` | **the human** | the value survives verbatim; the key line is re-emitted by the template |
+| anything else non-blank | nobody | **refuse**, naming the 1-based line and its text |
+
+A refused update MUST write nothing and MUST say what to do: `Move it outside the markers. Nothing
+written.` A line the plugin does not recognize is not the plugin's to delete, and guessing that a
+human wants it gone is exactly the mistake this table exists to prevent. The decision is pure
+(`policy.ts:planInitUpdate`); the command does I/O and UI only.
+
+#### Scenario: a stale block gets the new guidance and keeps the project's flows
+- GIVEN an `AGENTS.md` whose block carries the previous template's `session_rename` rule and `ephemeral-flows: code-review, spike`
+- WHEN `/scrub:init --update` is accepted
+- THEN the block carries the current rule and the precedence section, and its `ephemeral-flows:` line still reads `code-review, spike`.
+
+#### Scenario: a human line inside the markers stops the update
+- GIVEN a block containing `notes: read this before triage`
+- WHEN `/scrub:init --update` runs
+- THEN it notifies the refusal naming that line, and `AGENTS.md` is byte-for-byte unchanged.
+
+#### Scenario: an unterminated block is refused, not repaired
+- GIVEN a start marker with no end marker after it
+- WHEN `/scrub:init --update` runs
+- THEN it refuses naming the start line and writes nothing: the region has no known end, so the plugin does not invent one.
+
+#### Scenario: no block means it is a first run
+- GIVEN an `AGENTS.md` with no block
+- WHEN `/scrub:init --update` runs
+- THEN it appends the template exactly as a plain `/scrub:init` would, with the same message.
+
+### UD-02 — A refresh shows what changes, asks, backs up, and writes behind the guard
+
+`--dry-run` and any non-interactive mode (REQ-11) MUST report the same text the confirmation shows and
+MUST write nothing. In the TUI the command MUST show the diff — changed lines only, `-` for what leaves
+and `+` for what arrives, two-space context for an interior line both sides share
+(`policy.ts:diffPolicyBlock`, an LCS diff) — and MUST ask before writing. The context marker is a
+requirement: a common-prefix trim reported three surviving lines as a `-`/`+` rewrite in the first live
+trial, and a diff that lies about what changes is worse than a longer diff.
+
+Before the write, `AGENTS.md` MUST be copied into the backups root (`sessionfs.ts:getBackupDir`) and a
+failed backup MUST stop the write — an acceptance after the write would be a report about damage — and
+the success message MUST name the backup path. The write MUST go through the WG-01/WG-03 guard, so a
+symlinked `AGENTS.md` is refused and its target untouched. Every failure MUST be notified, never thrown
+outward (PB-04).
+
+#### Scenario: dry-run changes nothing
+- GIVEN a stale block
+- WHEN `/scrub:init --update --dry-run` runs
+- THEN the diff is reported and `AGENTS.md` is unchanged.
+
+#### Scenario: a failed backup writes nothing
+- GIVEN a backups root that cannot be written
+- WHEN the update is accepted
+- THEN the command notifies that it could not back up and `AGENTS.md` is unchanged.
+
+### UD-03 — Two `ephemeral-flows:` lines stop the update
+
+A block with more than one `ephemeral-flows:` line MUST be refused by the number of the second one. The
+parser unions such lines today; collapsing them into one is a merge decision about the human's data,
+and the plugin MUST NOT make it silently.
+
+#### Scenario: a second flow line is refused
+- GIVEN a block with `ephemeral-flows: a` and `ephemeral-flows: b` on later lines
+- WHEN `/scrub:init --update` runs
+- THEN it refuses naming the second line and writes nothing.
+
+### UD-04 — The update is idempotent, and the scanner is shared
+
+Planning the update again after applying it MUST report `current` and write nothing: the first run
+normalizes the region to the template, the second finds it already there. `current` is decided by
+comparing text, never by trusting a version the block declares about itself. `planInitWrite` and
+`planInitUpdate` MUST share one region scanner, so "a block exists at line N" cannot mean two different
+things to the two paths.
+
+#### Scenario: the second run is a no-op
+- GIVEN a block just refreshed by `--update`
+- WHEN the update is planned again
+- THEN the plan is `current` and nothing is written.
