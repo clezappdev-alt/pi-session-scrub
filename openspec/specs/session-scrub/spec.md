@@ -218,7 +218,9 @@ declare function handleScrubMark(input: {
 ### REQ-01 — D2 classification predicate with 7-day constant
 
 > **MODIFIED (Slice 4, 2026-10-26):** the predicate below gains verdict precedence and the conversation-turn floor — see **NB-07**, which governs wherever the two disagree. The `messageCount`-only reading is superseded; turns are counted from message roles.
-The system MUST classify every listed session per the D2 decision tree using `MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000`: live sessions are never actionable; named sessions are actionable ONLY with verdict `trash`; unnamed `trash`/`finished` verdicts are candidates; empty sessions are auto-deletable; old sessions (age ≥ MAX_AGE_MS) surface as `old-needs-confirm` with full detail; everything else is kept.
+
+> **MODIFIED (change `session-scrub-retention-axis`, 2026-10-29):** the sentence "named sessions are actionable ONLY with verdict `trash`" is corrected in place. A named session is reachable only through a **retention** verdict — `trash` or `ephemeral` — because those two are the retention axis and no name can express either; a name answers the continuation axis only. See **NB-02** (RA-01) and **NB-07** (RA-02).
+The system MUST classify every listed session per the D2 decision tree using `MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000`: live sessions are never actionable; named sessions are actionable ONLY with a retention verdict (`trash` or `ephemeral`); unnamed `trash`/`finished` verdicts are candidates; empty sessions are auto-deletable; old sessions (age ≥ MAX_AGE_MS) surface as `old-needs-confirm` with full detail; everything else is kept.
 
 #### Scenario: named session without trash verdict is protected
 - GIVEN a session with `name = "feat/auth"`, no `trash` verdict
@@ -723,7 +725,8 @@ Rationale, from `design.md` §"The organizing rule": the picker renders `session
 
 ### NB-02 — The name outranks the verdict entry; the entry survives when the name is silent
 
-The system MUST derive a verdict from the state when the name carries one — `pausa`/`espera` → `paused`, `abierto` → `keep`, `hecho`/`traspaso` → `finished` — and MUST NOT derive `ephemeral` or `trash` from a name, because both assert something a name cannot. When the name carries no state the verdict entry MUST be used, so verdicts written before the convention existed are not discarded. `scrub_mark` MUST refuse to write a verdict entry for a session whose name already declares a state, and MUST say so instead of writing a record that cannot take effect.
+> **MODIFIED (change `session-scrub-retention-axis`, 2026-10-29):** a **retention verdict outranks the name**, and the closing sentence is restated. When the recorded entry is `ephemeral` or `trash`, `name.ts:resolveVerdict` MUST return it and the name MUST NOT cancel it, however recently it was written — these two are the retention axis and a name cannot express either, so a name that answered for them would be a carrier answering a question it cannot answer (RA-01). `scrub_mark` therefore refuses a write that **cannot take effect**, computed by `name.ts:writeTakesEffect`, not every write on a state-declaring name (RA-03). Nothing else here changes, and the refusal text is byte-identical.
+The system MUST derive a verdict from the state when the name carries one — `pausa`/`espera` → `paused`, `abierto` → `keep`, `hecho`/`traspaso` → `finished` — and MUST NOT derive `ephemeral` or `trash` from a name, because both assert something a name cannot. A retention verdict outranks the name: `name.ts:resolveVerdict` MUST return a recorded `ephemeral` or `trash` before it reads the name. When the name carries no state the verdict entry MUST be used, so verdicts written before the convention existed are not discarded. `scrub_mark` MUST refuse a write that cannot take effect — exactly when `writeTakesEffect(name, latestEntry, next)` is false — and MUST say so instead of writing a record that would change nothing.
 
 #### Scenario: a name-derived verdict protects the session
 - GIVEN a session named `pausa: x` with no verdict entry
@@ -812,7 +815,9 @@ The id inside a session filename MUST be read after the last `_` (`<timestamp>_<
 
 ### NB-07 — Classification: an explicit verdict outranks the heuristics, and turns floor deletion
 
-`classifySession` MUST evaluate, in this order: live identity (resolved path or id, so a symlink or relative path cannot hide the live session) → named session (candidate only with `trash`, otherwise protected) → explicit verdict `trash`/`finished`/`ephemeral` → **any other explicit verdict → `kept`, before the empty and age checks** → empty session (`messageCount === 0`) → conversation-turn floor → age gate (`MAX_AGE_MS`) → `kept`.
+> **MODIFIED (change `session-scrub-retention-axis`, 2026-10-29):** the branch order is corrected. An **explicit retention verdict** (`trash` or `ephemeral`) is evaluated **above** the named branch, so a named session stays reachable as a candidate when a human recorded retention; the ephemeral-flow match stays **below** the named branch, because a text match only proposes and a name is a human record (RA-02). The order in the paragraph below is the amended one, and it is the order `classify.ts:classifySession` implements.
+
+`classifySession` MUST evaluate, in this order: live identity (resolved path or id, so a symlink or relative path cannot hide the live session) → **explicit retention verdict (`trash`/`ephemeral`) → `candidate`, reason `explicit-trash`/`ephemeral`** → named session → `named-protected` → explicit verdict `finished` → `candidate` → ephemeral-flow match → `candidate`, reason `ephemeral` → **any other explicit verdict → `kept`, before the empty and age checks** → empty session (`messageCount === 0`) → conversation-turn floor → age gate (`MAX_AGE_MS`) → `kept`.
 
 The turn floor MUST count messages whose `role` is `user` or `assistant` (`countConversationTurns`), MUST never use `messageCount` as a proxy for turns, and MUST fail toward protection when the count cannot be supplied: an unknown count protects, it never condemns.
 
@@ -1126,3 +1131,68 @@ things to the two paths.
 - GIVEN a block just refreshed by `--update`
 - WHEN the update is planned again
 - THEN the plan is `current` and nothing is written.
+
+### RA-03 — `scrub_mark` refuses only a write that cannot take effect
+
+`handleScrubMark` MUST refuse exactly when `name.ts:writeTakesEffect(name, latestEntryVerdict,
+nextVerdict)` is false — when the write would not change what `resolveVerdict` returns for the session
+— and MUST answer with the unchanged text of `render.ts:formatMarkRefusal`: `This session already
+declares its state as "<name>". The name is the record; use scrub_close to change it. Nothing was
+written.` For a session whose name declares no state every verdict MUST be accepted, as before.
+
+The refusal lives in `render.ts`, not inline in the handler, because the runner cannot load `index.ts`:
+a sentence inlined there can only be pinned by substring matching, which passes while the sentence
+around it is rewritten. `doccheck.test.ts` asserts that the handler *calls* the formatter and does not
+inline it.
+
+The defect this closes is an order, not a guard: closing a session that was correctly marked
+`ephemeral` resolved `finished`, the candidate branch never ran, and the session became protected for
+good — so the complete ritual destroyed the classification it was recording. `scrub_mark` could not
+repair it either, because NB-02 refused any write once the name declared a state. The same pattern was
+fixed once before in the adjacent surface (`session-scrub-mark-on-precedence`): the order was wrong,
+and the answer was to remove the order, not the guard.
+
+#### Scenario: marking after closing is accepted
+- GIVEN a session named `hecho: respuesta entregada` with no entry
+- WHEN `scrub_mark` is called with `ephemeral`
+- THEN the entry is written and the session becomes a candidate, so the order of close and mark stops deciding the outcome.
+
+#### Scenario: a redundant write is still refused
+- GIVEN a session named `pausa: falta el spec` with no entry
+- WHEN `scrub_mark` is called with `keep`
+- THEN it is refused with the text above and nothing is written: both resolve to `paused`.
+
+#### Scenario: retraction on the live session works
+- GIVEN a session named `hecho: x` with entry `ephemeral`
+- WHEN `scrub_mark` is called with `keep`
+- THEN it is accepted, and the session resolves `finished` and is protected again.
+
+### RA-04 — A candidate row shows the name it is about
+
+RA-02 makes a named session reachable as a candidate for the first time, so the row MUST identify it.
+`render.ts:formatCandidateLine` MUST render `trash-candidate <shortId> reason=<reason>` unchanged for a
+candidate with no name, and MUST append `named "<name>"` when it has a non-blank one, bounding the
+name to `CANDIDATE_NAME_MAX` (60 cells) with the ellipsis charged to that budget. Without it, a
+deletion consent reads `trash-candidate 01a18214 reason=ephemeral` for
+`hecho: respuesta del Discord entregada`. The formatter is host-free and import-free so its claim is
+testable: `formatAuditLine` lives in `index.ts`, which the runner cannot load, and `/scrub-apply`'s
+per-item confirm body carries the same row.
+
+Accepted cost, stated: a name made only of quotes escapes to twice its length, so the quoted form can
+reach `2 × CANDIDATE_NAME_MAX` — still far below the 283-column frame that aborted the TUI on
+2026-10-26, which is the failure the budget answers.
+
+#### Scenario: a named candidate says its name
+- GIVEN `{ shortId: "01a18214", reason: "ephemeral", name: "hecho: respuesta entregada" }`
+- WHEN `formatCandidateLine` runs
+- THEN the row names the session and the reason is still visible.
+
+#### Scenario: an unnamed candidate is unchanged
+- GIVEN `{ shortId: "01a18214", reason: "explicit-trash" }`
+- WHEN the row is formatted
+- THEN the output is exactly `trash-candidate 01a18214 reason=explicit-trash`.
+
+#### Scenario: a long name is bounded
+- GIVEN a candidate whose name is wider than 60 cells
+- WHEN the row is formatted
+- THEN the quoted name ends in `…` and the row stays on one line.
