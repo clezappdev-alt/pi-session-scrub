@@ -9,9 +9,10 @@
 # it runs on label and title edits too: the label arrives after the body.
 #
 # The checks live in `.github/scripts/pr-ceremony.cjs` and are pinned by its own tests, so the
-# gate can be read, corrected in a pull request, and reproduced locally. The labels come from
-# the API at check time, never from the event payload, so they are the labels the pull request
-# has now:
+# gate can be read, corrected in a pull request, and reproduced locally. The pull request it
+# checks is read ONCE from the API, by `.github/scripts/fetch-pull-request.cjs`, and the gate
+# decides on that one file — never on the event payload, which is a memory of an earlier
+# moment, and never on two sources that could disagree:
 #
 #   node --test .github/scripts/pr-ceremony.test.cjs
 #   PR_TITLE="fix(scrub): x" PR_BODY="Closes #1" PR_LABELS='[{"name":"type:bug"}]' \
@@ -25,7 +26,6 @@ on:
 permissions:
   contents: read
   pull-requests: read
-  issues: read
 
 # One run per pull request at a time, derived from the PR number.
 #
@@ -36,6 +36,16 @@ permissions:
 concurrency:
   group: pr-ceremony-${{ github.event.pull_request.number }}
   cancel-in-progress: true
+
+# The accepted window that concurrency opens, written down so nobody "fixes" it twice.
+#
+# Cancelling the older run leaves a `ceremony` check displayed as cancelled on this head SHA
+# for the seconds the replacement needs to finish. A required check resolves per head SHA
+# against the latest run of it, so the cancelled one cannot hold the merge, and the run that
+# replaces it is already in flight: the window closes itself. Measured 2026-10-29, when two
+# events (`opened` and `labeled`) arrived for the same PR. Deliberately not coded around —
+# bounding `cancel-in-progress` to a SHA would add a key to buy what the head-SHA rule
+# already guarantees.
 
 jobs:
   ceremony:
@@ -54,21 +64,28 @@ jobs:
       - name: The gate's own tests
         run: node --test .github/scripts/pr-ceremony.test.cjs
 
-      # The labels are read from the API, not from the event payload.
+      # The pull request is read once, and the gate decides on what came back.
       #
-      # `gh pr create --label type:bug` sends the label in the creation call, and the `opened`
-      # event still arrives with `labels: []`. Measured on #54: the gate failed its own pull
-      # request with "found 0 type:* label(s)" while `type:bug` was on the PR the whole time.
-      # The question this gate answers is "does this pull request have exactly one type label
-      # right now", and only the API answers that; the payload answers "what did the labels
-      # look like when this event was built", which is a different and less useful question.
-      - name: Check this pull request
+      # The old shape had two defects. The title and the body came from the event payload
+      # while the labels came from the API — two moments of the same pull request in one
+      # verdict, and a body edited at the wrong second described as it was a minute earlier.
+      # And the one network call on the required path had no retry: a transient 5xx or a
+      # rate limit failed this job until somebody re-ran it by hand.
+      #
+      # One read now returns the whole pull request — title, body and labels in the same
+      # response — and it retries three times, one and two seconds apart. A read that still
+      # fails FAILS this job with the gate's own message. It never falls through to a green
+      # check: a gate that passes when it could not read its input enforces nothing, and the
+      # `ceremony` check is required, so a false green here is a merge nobody checked.
+      - name: Read this pull request
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-        run: |
-          PR_LABELS="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels" --jq 'map({name})')"
-          export PR_LABELS
-          node .github/scripts/pr-ceremony.cjs
+        run: >-
+          node .github/scripts/fetch-pull-request.cjs
+          "$GITHUB_REPOSITORY" "$PR_NUMBER" "$RUNNER_TEMP/pull-request.json"
+
+      - name: Check this pull request
+        env:
+          PR_JSON_PATH: ${{ runner.temp }}/pull-request.json
+        run: node .github/scripts/pr-ceremony.cjs
