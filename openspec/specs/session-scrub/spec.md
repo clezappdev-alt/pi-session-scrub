@@ -260,6 +260,16 @@ The system MUST propose `ephemeral` candidates ONLY when `matchesEphemeralFlow` 
 > **region** now — keys read only between the first start marker and the first end after it
 > (PB-01) — and fence-aware, so a quoted template is text and not policy (PB-02). See
 > `openspec/changes/session-scrub-policy-block/spec.md`.
+
+> **MODIFIED (change `session-scrub-mark-on-precedence`, 2026-10-27):** because `verdicts:` and
+> `mark-on:` are guidance parsed by nothing, the guidance itself is product, and it MUST be correct.
+> The block MUST state its precedence — the name is the record, a name that starts with a state
+> already IS the verdict, so `scrub_mark` refusing a write that cannot take effect is deliberate and
+> nothing is missing — and its rename rule MUST be conditional: `keep` is ordered only when the new
+> name declares no state (MP-01). It MUST also carry the state → verdict table in a form a test can
+> read, and a test MUST compare it with `name.ts:verdictFromState` for every `STATE` value, so a
+> sixth state cannot land while the block describes a vocabulary the code no longer has (MP-02;
+> `policy.test.ts`, "the precedence the block states is the precedence the code implements").
 The system MUST parse the POLICY block per F4 (`#`/blank ignored; `verdicts:`/`mark-on:`/`ephemeral-flows:` keys; `<...>` placeholders = empty; absent/unparseable = conservative default with empty ephemeral-flows and no agent marking).
 
 #### Scenario: absent block disables ephemeral matching
@@ -271,6 +281,11 @@ The system MUST parse the POLICY block per F4 (`#`/blank ignored; `verdicts:`/`m
 - GIVEN a block containing only `ephemeral-flows: <flow-name-1>, <flow-name-2>`
 - WHEN parsed
 - THEN `ephemeralFlows` is `[]`.
+
+#### Scenario: the guidance's precedence agrees with the code
+- GIVEN the state → verdict table written in `POLICY_TEMPLATE`
+- WHEN it is compared with `name.ts:verdictFromState` for every `STATE` value
+- THEN every state appears exactly once, no other token appears, and every verdict agrees with the code.
 
 ### REQ-04 — `scrub_mark` verdict tool with versioned data
 The system MUST expose a model-invoked `scrub_mark` tool accepting verdict `keep | paused | finished | ephemeral | trash` plus optional `reason`, persisting `{ customType: "session-scrub/verdict", data: { version: 1, verdict, at, reason? } }` as a custom entry that MUST NOT participate in LLM context; latest `at` wins on read.
@@ -966,23 +981,25 @@ Cross-home listing, LLM naming, migration of historical sessions without confirm
 3. **NS11 cancelled handoff writes nothing** — a cancelled switch (another extension returning `cancel`) leaves the origin's name untouched and reports `"scrub:handoff: cancelled, no new session was created."`.
 4. **NS12 close states round-trip** — every `CLOSE_STATES` entry parses back out of its own formatted name, so a state the schema accepts can never land in `/resume` as free text.
 
-## Slice 6 — the four deltas the canonical file had not absorbed (appended by reconciliation 2026-10-29)
+## Slice 6 — the five deltas the canonical file had not absorbed (appended by reconciliation 2026-10-29)
 
-**Source:** four changes that were closed and merged while their deltas stayed in
+**Source:** five changes that were closed and merged while their deltas stayed in
 `openspec/changes/` — `session-scrub-write-guards` (2026-10-27, WG-01…WG-04),
-`session-scrub-init-update` (2026-10-27, UD-01…UD-04), `session-scrub-retention-axis` (2026-10-29,
-RA-01…RA-04) and `session-scrub-line-budget` (2026-10-26, S1…S5). Every clause below was read back
-**against the code**, not copied from its delta: each symbol it names exists in
-`extensions/session-scrub/`, and each message it quotes is asserted by a test.
+`session-scrub-init-update` (2026-10-27, UD-01…UD-04), `session-scrub-mark-on-precedence`
+(2026-10-27, MP-01…MP-02), `session-scrub-retention-axis` (2026-10-29, RA-01…RA-04) and
+`session-scrub-line-budget` (2026-10-26, S1…S5). Every clause below was read back **against the
+code**, not copied from its delta: each symbol it names exists in `extensions/session-scrub/`, and
+each message it quotes is asserted by a test.
 
-Why they were owed: `docs/behavior.md` describes all four as built, and this file — the authority a
+Why they were owed: `docs/behavior.md` describes all five as built, and this file — the authority a
 reader trusts to know what the product must do — did not. The cost is not cosmetic. A reader of
 REQ-08 could not learn that `--update` exists; a reader of REQ-07 could not learn that no write
-follows a symlink; and the headline of `0.7.0` (a retention verdict surviving the name) was absent
+follows a symlink; REQ-03 did not say that the guidance it declares to be product must agree with
+the code; and the headline of `0.7.0` (a retention verdict surviving the name) was absent
 altogether. This repository already paid for that failure once, when REQ-03 described keys nobody
 reads.
 
-**Where each delta landed.** Nothing is deleted from Slices 1–5; four clauses are corrected in
+**Where each delta landed.** Nothing is deleted from Slices 1–5; six clauses are corrected in
 place, each under a `MODIFIED` marker above its requirement.
 
 | delta clause | lands in | as |
@@ -990,6 +1007,7 @@ place, each under a `MODIFIED` marker above its requirement.
 | WG-01…WG-03 | **WG-01…WG-03** below | the non-regular-file floor |
 | WG-04 | **WG-04** below + **REQ-07**, in place (MODIFIED) | the restore refusal, now testable and tested |
 | UD-01…UD-04 | **UD-01…UD-04** below | `--update` and block ownership |
+| MP-01, MP-02 | **REQ-03**, in place (MODIFIED) | the guidance's precedence and its table test |
 | RA-01 | **NB-02**, in place (MODIFIED) | a retention verdict outranks the name |
 | RA-02 | **REQ-01** and **NB-07**, in place (MODIFIED) | the named-retention sentence and the branch order |
 | RA-03, RA-04 | **RA-03**, **RA-04** below | when `scrub_mark` refuses; the candidate row carries its name |
