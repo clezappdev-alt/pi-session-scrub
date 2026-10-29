@@ -218,7 +218,9 @@ declare function handleScrubMark(input: {
 ### REQ-01 — D2 classification predicate with 7-day constant
 
 > **MODIFIED (Slice 4, 2026-10-26):** the predicate below gains verdict precedence and the conversation-turn floor — see **NB-07**, which governs wherever the two disagree. The `messageCount`-only reading is superseded; turns are counted from message roles.
-The system MUST classify every listed session per the D2 decision tree using `MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000`: live sessions are never actionable; named sessions are actionable ONLY with verdict `trash`; unnamed `trash`/`finished` verdicts are candidates; empty sessions are auto-deletable; old sessions (age ≥ MAX_AGE_MS) surface as `old-needs-confirm` with full detail; everything else is kept.
+
+> **MODIFIED (change `session-scrub-retention-axis`, 2026-10-29):** the sentence "named sessions are actionable ONLY with verdict `trash`" is corrected in place. A named session is reachable only through a **retention** verdict — `trash` or `ephemeral` — because those two are the retention axis and no name can express either; a name answers the continuation axis only. See **NB-02** (RA-01) and **NB-07** (RA-02).
+The system MUST classify every listed session per the D2 decision tree using `MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000`: live sessions are never actionable; named sessions are actionable ONLY with a retention verdict (`trash` or `ephemeral`); unnamed `trash`/`finished` verdicts are candidates; empty sessions are auto-deletable; old sessions (age ≥ MAX_AGE_MS) surface as `old-needs-confirm` with full detail; everything else is kept.
 
 #### Scenario: named session without trash verdict is protected
 - GIVEN a session with `name = "feat/auth"`, no `trash` verdict
@@ -258,6 +260,16 @@ The system MUST propose `ephemeral` candidates ONLY when `matchesEphemeralFlow` 
 > **region** now — keys read only between the first start marker and the first end after it
 > (PB-01) — and fence-aware, so a quoted template is text and not policy (PB-02). See
 > `openspec/changes/session-scrub-policy-block/spec.md`.
+
+> **MODIFIED (change `session-scrub-mark-on-precedence`, 2026-10-27):** because `verdicts:` and
+> `mark-on:` are guidance parsed by nothing, the guidance itself is product, and it MUST be correct.
+> The block MUST state its precedence — the name is the record, a name that starts with a state
+> already IS the verdict, so `scrub_mark` refusing a write that cannot take effect is deliberate and
+> nothing is missing — and its rename rule MUST be conditional: `keep` is ordered only when the new
+> name declares no state (MP-01). It MUST also carry the state → verdict table in a form a test can
+> read, and a test MUST compare it with `name.ts:verdictFromState` for every `STATE` value, so a
+> sixth state cannot land while the block describes a vocabulary the code no longer has (MP-02;
+> `policy.test.ts`, "the precedence the block states is the precedence the code implements").
 The system MUST parse the POLICY block per F4 (`#`/blank ignored; `verdicts:`/`mark-on:`/`ephemeral-flows:` keys; `<...>` placeholders = empty; absent/unparseable = conservative default with empty ephemeral-flows and no agent marking).
 
 #### Scenario: absent block disables ephemeral matching
@@ -269,6 +281,11 @@ The system MUST parse the POLICY block per F4 (`#`/blank ignored; `verdicts:`/`m
 - GIVEN a block containing only `ephemeral-flows: <flow-name-1>, <flow-name-2>`
 - WHEN parsed
 - THEN `ephemeralFlows` is `[]`.
+
+#### Scenario: the guidance's precedence agrees with the code
+- GIVEN the state → verdict table written in `POLICY_TEMPLATE`
+- WHEN it is compared with `name.ts:verdictFromState` for every `STATE` value
+- THEN every state appears exactly once, no other token appears, and every verdict agrees with the code.
 
 ### REQ-04 — `scrub_mark` verdict tool with versioned data
 The system MUST expose a model-invoked `scrub_mark` tool accepting verdict `keep | paused | finished | ephemeral | trash` plus optional `reason`, persisting `{ customType: "session-scrub/verdict", data: { version: 1, verdict, at, reason? } }` as a custom entry that MUST NOT participate in LLM context; latest `at` wins on read.
@@ -305,6 +322,8 @@ The system MUST implement `/scrub-apply [--dry-run]` so that dry-run (flag or no
 - THEN exactly those 2 files exist under `getTrashDir()` and the re-list count drops by 2.
 
 ### REQ-07 — `/scrub-restore` round-trips trashed sessions
+
+> **MODIFIED (change `session-scrub-write-guards`, 2026-10-27):** the refusal to overwrite an existing target is now pinned by a test that asserts both halves — the refusal and that neither file moves (WG-04); its test did not exist, and it could not exist while the move lived in `index.ts`.
 The system MUST implement `/scrub-restore` listing `getTrashDir()` contents, restoring the user's TUI selection via `moveFromTrash` (never overwriting), notifying the restored count, and documenting the manual `mv` recovery path.
 
 #### Scenario: restore returns a session to audit
@@ -318,6 +337,13 @@ The system MUST implement `/scrub-restore` listing `getTrashDir()` contents, res
 > `--dry-run` and non-interactive dry-run, previews the exact text it would append, confirms
 > in the TUI, refuses by naming the existing block's line, and notifies a write failure
 > instead of rejecting outward (PB-03, PB-04).
+
+> **MODIFIED (change `session-scrub-init-update`, 2026-10-27):** `/scrub:init` gains `--update`, which
+> refreshes an existing block instead of refusing forever, under an ownership rule that decides what
+> may change and what stops the update (UD-01…UD-04). A project that already carries a block could
+> not receive a template fix any other way, and the only workaround was a hand edit — which is the
+> bug this closes: the stale copy looks authoritative, the agent obeys it, and nothing compares it to
+> the template.
 The system MUST implement `/scrub-init` creating/updating project-local AGENTS.md idempotently with the delimited generic commented template (taxonomy + when-to-mark guidance + `verdicts:`/`mark-on:`/`ephemeral-flows:` keys with placeholders), never duplicating an existing block.
 
 #### Scenario: second init is a no-op
@@ -714,7 +740,8 @@ Rationale, from `design.md` §"The organizing rule": the picker renders `session
 
 ### NB-02 — The name outranks the verdict entry; the entry survives when the name is silent
 
-The system MUST derive a verdict from the state when the name carries one — `pausa`/`espera` → `paused`, `abierto` → `keep`, `hecho`/`traspaso` → `finished` — and MUST NOT derive `ephemeral` or `trash` from a name, because both assert something a name cannot. When the name carries no state the verdict entry MUST be used, so verdicts written before the convention existed are not discarded. `scrub_mark` MUST refuse to write a verdict entry for a session whose name already declares a state, and MUST say so instead of writing a record that cannot take effect.
+> **MODIFIED (change `session-scrub-retention-axis`, 2026-10-29):** a **retention verdict outranks the name**, and the closing sentence is restated. When the recorded entry is `ephemeral` or `trash`, `name.ts:resolveVerdict` MUST return it and the name MUST NOT cancel it, however recently it was written — these two are the retention axis and a name cannot express either, so a name that answered for them would be a carrier answering a question it cannot answer (RA-01). `scrub_mark` therefore refuses a write that **cannot take effect**, computed by `name.ts:writeTakesEffect`, not every write on a state-declaring name (RA-03). Nothing else here changes, and the refusal text is byte-identical.
+The system MUST derive a verdict from the state when the name carries one — `pausa`/`espera` → `paused`, `abierto` → `keep`, `hecho`/`traspaso` → `finished` — and MUST NOT derive `ephemeral` or `trash` from a name, because both assert something a name cannot. A retention verdict outranks the name: `name.ts:resolveVerdict` MUST return a recorded `ephemeral` or `trash` before it reads the name. When the name carries no state the verdict entry MUST be used, so verdicts written before the convention existed are not discarded. `scrub_mark` MUST refuse a write that cannot take effect — exactly when `writeTakesEffect(name, latestEntry, next)` is false — and MUST say so instead of writing a record that would change nothing.
 
 #### Scenario: a name-derived verdict protects the session
 - GIVEN a session named `pausa: x` with no verdict entry
@@ -803,7 +830,9 @@ The id inside a session filename MUST be read after the last `_` (`<timestamp>_<
 
 ### NB-07 — Classification: an explicit verdict outranks the heuristics, and turns floor deletion
 
-`classifySession` MUST evaluate, in this order: live identity (resolved path or id, so a symlink or relative path cannot hide the live session) → named session (candidate only with `trash`, otherwise protected) → explicit verdict `trash`/`finished`/`ephemeral` → **any other explicit verdict → `kept`, before the empty and age checks** → empty session (`messageCount === 0`) → conversation-turn floor → age gate (`MAX_AGE_MS`) → `kept`.
+> **MODIFIED (change `session-scrub-retention-axis`, 2026-10-29):** the branch order is corrected. An **explicit retention verdict** (`trash` or `ephemeral`) is evaluated **above** the named branch, so a named session stays reachable as a candidate when a human recorded retention; the ephemeral-flow match stays **below** the named branch, because a text match only proposes and a name is a human record (RA-02). The order in the paragraph below is the amended one, and it is the order `classify.ts:classifySession` implements.
+
+`classifySession` MUST evaluate, in this order: live identity (resolved path or id, so a symlink or relative path cannot hide the live session) → **explicit retention verdict (`trash`/`ephemeral`) → `candidate`, reason `explicit-trash`/`ephemeral`** → named session → `named-protected` → explicit verdict `finished` → `candidate` → ephemeral-flow match → `candidate`, reason `ephemeral` → **any other explicit verdict → `kept`, before the empty and age checks** → empty session (`messageCount === 0`) → conversation-turn floor → age gate (`MAX_AGE_MS`) → `kept`.
 
 The turn floor MUST count messages whose `role` is `user` or `assistant` (`countConversationTurns`), MUST never use `messageCount` as a proxy for turns, and MUST fail toward protection when the count cannot be supplied: an unknown count protects, it never condemns.
 
@@ -951,3 +980,311 @@ Cross-home listing, LLM naming, migration of historical sessions without confirm
 2. **NS10 handoff writes last** — in a live host, `/scrub:handoff` leaves the destination named `pausa: desde <abbr> · …` and the origin `traspaso: <abbr> · …`, both visible in `/resume`.
 3. **NS11 cancelled handoff writes nothing** — a cancelled switch (another extension returning `cancel`) leaves the origin's name untouched and reports `"scrub:handoff: cancelled, no new session was created."`.
 4. **NS12 close states round-trip** — every `CLOSE_STATES` entry parses back out of its own formatted name, so a state the schema accepts can never land in `/resume` as free text.
+
+## Slice 6 — the five deltas the canonical file had not absorbed (appended by reconciliation 2026-10-29)
+
+**Source:** five changes that were closed and merged while their deltas stayed in
+`openspec/changes/` — `session-scrub-write-guards` (2026-10-27, WG-01…WG-04),
+`session-scrub-init-update` (2026-10-27, UD-01…UD-04), `session-scrub-mark-on-precedence`
+(2026-10-27, MP-01…MP-02), `session-scrub-retention-axis` (2026-10-29, RA-01…RA-04) and
+`session-scrub-line-budget` (2026-10-26, S1…S5). Every clause below was read back **against the
+code**, not copied from its delta: each symbol it names exists in `extensions/session-scrub/`, and
+each message it quotes is asserted by a test.
+
+Why they were owed: `docs/behavior.md` describes all five as built, and this file — the authority a
+reader trusts to know what the product must do — did not. The cost is not cosmetic. A reader of
+REQ-08 could not learn that `--update` exists; a reader of REQ-07 could not learn that no write
+follows a symlink; REQ-03 did not say that the guidance it declares to be product must agree with
+the code; and the headline of `0.7.0` (a retention verdict surviving the name) was absent
+altogether. This repository already paid for that failure once, when REQ-03 described keys nobody
+reads.
+
+**Where each delta landed.** Nothing is deleted from Slices 1–5; six clauses are corrected in
+place, each under a `MODIFIED` marker above its requirement.
+
+| delta clause | lands in | as |
+| --- | --- | --- |
+| WG-01…WG-03 | **WG-01…WG-03** below | the non-regular-file floor |
+| WG-04 | **WG-04** below + **REQ-07**, in place (MODIFIED) | the restore refusal, now testable and tested |
+| UD-01…UD-04 | **UD-01…UD-04** below | `--update` and block ownership |
+| MP-01, MP-02 | **REQ-03**, in place (MODIFIED) | the guidance's precedence and its table test |
+| RA-01 | **NB-02**, in place (MODIFIED) | a retention verdict outranks the name |
+| RA-02 | **REQ-01** and **NB-07**, in place (MODIFIED) | the named-retention sentence and the branch order |
+| RA-03, RA-04 | **RA-03**, **RA-04** below | when `scrub_mark` refuses; the candidate row carries its name |
+| S1–S4 | **LB-01…LB-04** below | one frame budget for every renderer |
+| S5 | **NB-04**, already in place | the `<shortId>` correction |
+
+### WG-01 — No write follows a symlink
+
+`sessionfs.ts:refuseNonRegularFile(path, label)` MUST `lstat` the path and refuse any path that
+exists and is not a regular file, with `refusing to write through <label>: not a regular file
+(<path>)`. `lstat` is the requirement, not an implementation detail: `stat` resolves the link and
+answers about the target, which is the question that must not be asked. A path that does not exist
+MUST pass — the caller decides, and `/scrub:init` creates an absent `AGENTS.md`.
+
+### WG-02 — The backup copy is guarded
+
+`sessionfs.ts:backupFileAside` MUST call `refuseNonRegularFile` before its `copyFileSync` — the only
+copy in the extension. Without it, a symlinked session file turns "back up this file" into "copy any
+readable file into a known place".
+
+#### Scenario: a symlinked session file is never backed up
+- GIVEN a session path that is a symlink to another readable file
+- WHEN the write path asks for a backup
+- THEN it throws `refusing to write through the session file: not a regular file`
+- AND no file is created in the backup directory.
+
+### WG-03 — Both policy writes are guarded
+
+`sessionfs.ts:appendPolicyBlock` and `sessionfs.ts:replacePolicyBlock` MUST call
+`refuseNonRegularFile(agentsPath, "AGENTS.md")` before their `writeFileSync`. The guard runs before
+the write, never after: after it would be a report about a write that already happened. Without it, a
+project whose `AGENTS.md` is a symlink can have the policy block written through it, outside the
+project — by a first run and by `--update` alike, which is why both paths carry it.
+
+#### Scenario: a symlinked project AGENTS.md is never appended
+- GIVEN `<ctx.cwd>/AGENTS.md` is a symlink to a file outside the project
+- WHEN `/scrub:init` is confirmed
+- THEN the write is refused, the command notifies the reason, and the link target is byte-for-byte unchanged.
+
+### WG-04 — A restore refuses an existing target, and a test says so
+
+`sessionfs.ts:moveFromTrash` MUST refuse when the restored path already exists, with `restore target
+already exists: <path>`, and MUST move neither file. `moveToTrash` and `moveFromTrash` live in
+`sessionfs.ts` precisely so this refusal can be a unit test at all; the command's behaviour is
+unchanged — same `mkdirSync`, same `renameSync`, same per-file `Skipped <id>` handling.
+
+#### Scenario: a restore never overwrites
+- GIVEN a trash copy and a file of the same name already in the sessions directory
+- WHEN the restore runs
+- THEN it refuses with `restore target already exists: <path>`
+- AND both files keep their own bytes.
+
+### UD-01 — `--update` refreshes the region, and ownership decides what may change
+
+`/scrub:init --update` MUST locate the block exactly as the parser does — the first unfenced
+`POLICY_START` and the first unfenced `POLICY_END` after it (PB-01, PB-02; `policy.ts:findBlockRegion`,
+the scanner `planInitWrite` shares) — and MUST replace everything between the markers with the current
+`POLICY_TEMPLATE`. Which lines inside the region may change is decided by ownership, not by what looks
+stale:
+
+| line inside the markers | owner | what `--update` does |
+| --- | --- | --- |
+| blank | template | rewritten |
+| `#`-comment (the guidance prose) | template | rewritten |
+| `verdicts:` , `mark-on:` | template | rewritten |
+| `ephemeral-flows:` | **the human** | the value survives verbatim; the key line is re-emitted by the template |
+| anything else non-blank | nobody | **refuse**, naming the 1-based line and its text |
+
+A refused update MUST write nothing and MUST say what to do: `Move it outside the markers. Nothing
+written.` A line the plugin does not recognize is not the plugin's to delete, and guessing that a
+human wants it gone is exactly the mistake this table exists to prevent. The decision is pure
+(`policy.ts:planInitUpdate`); the command does I/O and UI only.
+
+#### Scenario: a stale block gets the new guidance and keeps the project's flows
+- GIVEN an `AGENTS.md` whose block carries the previous template's `session_rename` rule and `ephemeral-flows: code-review, spike`
+- WHEN `/scrub:init --update` is accepted
+- THEN the block carries the current rule and the precedence section, and its `ephemeral-flows:` line still reads `code-review, spike`.
+
+#### Scenario: a human line inside the markers stops the update
+- GIVEN a block containing `notes: read this before triage`
+- WHEN `/scrub:init --update` runs
+- THEN it notifies the refusal naming that line, and `AGENTS.md` is byte-for-byte unchanged.
+
+#### Scenario: an unterminated block is refused, not repaired
+- GIVEN a start marker with no end marker after it
+- WHEN `/scrub:init --update` runs
+- THEN it refuses naming the start line and writes nothing: the region has no known end, so the plugin does not invent one.
+
+#### Scenario: no block means it is a first run
+- GIVEN an `AGENTS.md` with no block
+- WHEN `/scrub:init --update` runs
+- THEN it appends the template exactly as a plain `/scrub:init` would, with the same message.
+
+### UD-02 — A refresh shows what changes, asks, backs up, and writes behind the guard
+
+`--dry-run` and any non-interactive mode (REQ-11) MUST report the same text the confirmation shows and
+MUST write nothing. In the TUI the command MUST show the diff — changed lines only, `-` for what leaves
+and `+` for what arrives, two-space context for an interior line both sides share
+(`policy.ts:diffPolicyBlock`, an LCS diff) — and MUST ask before writing. The context marker is a
+requirement: a common-prefix trim reported three surviving lines as a `-`/`+` rewrite in the first live
+trial, and a diff that lies about what changes is worse than a longer diff.
+
+Before the write, `AGENTS.md` MUST be copied into the backups root (`sessionfs.ts:getBackupDir`) and a
+failed backup MUST stop the write — an acceptance after the write would be a report about damage — and
+the success message MUST name the backup path. The write MUST go through the WG-01/WG-03 guard, so a
+symlinked `AGENTS.md` is refused and its target untouched. Every failure MUST be notified, never thrown
+outward (PB-04).
+
+#### Scenario: dry-run changes nothing
+- GIVEN a stale block
+- WHEN `/scrub:init --update --dry-run` runs
+- THEN the diff is reported and `AGENTS.md` is unchanged.
+
+#### Scenario: a failed backup writes nothing
+- GIVEN a backups root that cannot be written
+- WHEN the update is accepted
+- THEN the command notifies that it could not back up and `AGENTS.md` is unchanged.
+
+### UD-03 — Two `ephemeral-flows:` lines stop the update
+
+A block with more than one `ephemeral-flows:` line MUST be refused by the number of the second one. The
+parser unions such lines today; collapsing them into one is a merge decision about the human's data,
+and the plugin MUST NOT make it silently.
+
+#### Scenario: a second flow line is refused
+- GIVEN a block with `ephemeral-flows: a` and `ephemeral-flows: b` on later lines
+- WHEN `/scrub:init --update` runs
+- THEN it refuses naming the second line and writes nothing.
+
+### UD-04 — The update is idempotent, and the scanner is shared
+
+Planning the update again after applying it MUST report `current` and write nothing: the first run
+normalizes the region to the template, the second finds it already there. `current` is decided by
+comparing text, never by trusting a version the block declares about itself. `planInitWrite` and
+`planInitUpdate` MUST share one region scanner, so "a block exists at line N" cannot mean two different
+things to the two paths.
+
+#### Scenario: the second run is a no-op
+- GIVEN a block just refreshed by `--update`
+- WHEN the update is planned again
+- THEN the plan is `current` and nothing is written.
+
+### RA-03 — `scrub_mark` refuses only a write that cannot take effect
+
+`handleScrubMark` MUST refuse exactly when `name.ts:writeTakesEffect(name, latestEntryVerdict,
+nextVerdict)` is false — when the write would not change what `resolveVerdict` returns for the session
+— and MUST answer with the unchanged text of `render.ts:formatMarkRefusal`: `This session already
+declares its state as "<name>". The name is the record; use scrub_close to change it. Nothing was
+written.` For a session whose name declares no state every verdict MUST be accepted, as before.
+
+The refusal lives in `render.ts`, not inline in the handler, because the runner cannot load `index.ts`:
+a sentence inlined there can only be pinned by substring matching, which passes while the sentence
+around it is rewritten. `doccheck.test.ts` asserts that the handler *calls* the formatter and does not
+inline it.
+
+The defect this closes is an order, not a guard: closing a session that was correctly marked
+`ephemeral` resolved `finished`, the candidate branch never ran, and the session became protected for
+good — so the complete ritual destroyed the classification it was recording. `scrub_mark` could not
+repair it either, because NB-02 refused any write once the name declared a state. The same pattern was
+fixed once before in the adjacent surface (`session-scrub-mark-on-precedence`): the order was wrong,
+and the answer was to remove the order, not the guard.
+
+#### Scenario: marking after closing is accepted
+- GIVEN a session named `hecho: respuesta entregada` with no entry
+- WHEN `scrub_mark` is called with `ephemeral`
+- THEN the entry is written and the session becomes a candidate, so the order of close and mark stops deciding the outcome.
+
+#### Scenario: a redundant write is still refused
+- GIVEN a session named `pausa: falta el spec` with no entry
+- WHEN `scrub_mark` is called with `keep`
+- THEN it is refused with the text above and nothing is written: both resolve to `paused`.
+
+#### Scenario: retraction on the live session works
+- GIVEN a session named `hecho: x` with entry `ephemeral`
+- WHEN `scrub_mark` is called with `keep`
+- THEN it is accepted, and the session resolves `finished` and is protected again.
+
+### RA-04 — A candidate row shows the name it is about
+
+RA-02 makes a named session reachable as a candidate for the first time, so the row MUST identify it.
+`render.ts:formatCandidateLine` MUST render `trash-candidate <shortId> reason=<reason>` unchanged for a
+candidate with no name, and MUST append `named "<name>"` when it has a non-blank one, bounding the
+name to `CANDIDATE_NAME_MAX` (60 cells) with the ellipsis charged to that budget. Without it, a
+deletion consent reads `trash-candidate 01a18214 reason=ephemeral` for
+`hecho: respuesta del Discord entregada`. The formatter is host-free and import-free so its claim is
+testable: `formatAuditLine` lives in `index.ts`, which the runner cannot load, and `/scrub-apply`'s
+per-item confirm body carries the same row.
+
+Accepted cost, stated: a name made only of quotes escapes to twice its length, so the quoted form can
+reach `2 × CANDIDATE_NAME_MAX` — still far below the 283-column frame that aborted the TUI on
+2026-10-26, which is the failure the budget answers.
+
+#### Scenario: a named candidate says its name
+- GIVEN `{ shortId: "01a18214", reason: "ephemeral", name: "hecho: respuesta entregada" }`
+- WHEN `formatCandidateLine` runs
+- THEN the row names the session and the reason is still visible.
+
+#### Scenario: an unnamed candidate is unchanged
+- GIVEN `{ shortId: "01a18214", reason: "explicit-trash" }`
+- WHEN the row is formatted
+- THEN the output is exactly `trash-candidate 01a18214 reason=explicit-trash`.
+
+#### Scenario: a long name is bounded
+- GIVEN a candidate whose name is wider than 60 cells
+- WHEN the row is formatted
+- THEN the quoted name ends in `…` and the row stays on one line.
+
+### LB-01 — The failure it answers: a line wider than the frame aborts the TUI
+
+Pi aborts the whole TUI when a component returns a line wider than the frame it was given. The result
+line was bounded first (Slice 5, S8); the call lines were not. `renderMarkCall` and `renderCloseCall`
+built their line from a painted tool name, a painted state and a quoted preview, and passed it to a
+component that **ignores `width`**. With the preview capped at 60 cells and a `scrub_close` head of
+roughly 25, an 80-column terminal could still be exceeded — so the crash the result line no longer had
+stayed reachable from the call line.
+
+### LB-02 — The contract: one budget for every renderer
+
+Every renderer in `render.ts` that hands a line to the frame MUST return a line whose visible width —
+measured by `render.ts:textCells`: combining marks 0, ASCII 1, everything else 2 — is at most the
+`width` the host asks for. The rule is one budget shared by the call lines and the result line, so a
+renderer added later inherits it instead of inventing another. The line MUST never be padded to the
+frame and MUST never be more than one line.
+
+### LB-03 — Degradation order: preview first, head last
+
+When the whole line does not fit, the preview MUST be shortened first and then dropped entirely.
+The tool name and the state are what a human needs to know what was called, so they are the last to go;
+only when even the head does not fit is the head cut with the ellipsis. `PREVIEW_OVERHEAD` is charged
+for the quotes and the separating space, so the quoted form fits without arithmetic by the caller.
+`PREVIEW_MAX` (60 cells) stays a **content** budget — a long text cannot crowd the state out on a wide
+terminal — and the frame budget only ever cuts further.
+
+#### Scenario: a narrow frame drops the preview, never the state
+- GIVEN a `scrub_close` call with a 60-cell preview and a frame of 80 columns
+- WHEN the call line renders
+- THEN the state is visible, the preview is shortened or absent, and the line's cell width is at most 80.
+
+#### Scenario: an extremely narrow frame cuts the head
+- GIVEN a frame narrower than the head alone
+- WHEN the call line renders
+- THEN the head is cut with `…` and the line is still at most the requested width.
+
+### LB-04 — The ellipsis is charged to its budget, and the test pins the invariant
+
+`PREVIEW_MAX` and `CANDIDATE_NAME_MAX` are content budgets (60 cells each) and the ellipsis is charged
+to whichever budget is in play, so a truncation never overshoots by the width of `…`. A test MUST
+assert the **invariant** it is protecting — the produced line's cell width against the requested width,
+or `textCells(row) <= head + 2 + CANDIDATE_NAME_MAX` — and not a derived count: a test pinned to a
+number breaks by arithmetic when the glyph changes, and passes when the contract does.
+
+Slice 6 closes the S5 half of the same delta in place: **NB-04**'s `<shortId>` clause was corrected
+against **NB-10** (a population-derived abbreviation, never a fixed eight characters), under a
+`MODIFIED` marker that names `session-scrub-line-budget`.
+
+## Slice-6 out of scope (the four deltas' non-goals, unchanged)
+
+- **Retraction of a retention verdict on a session that is not live.** The path does not exist today:
+  `scrub_mark` writes only the live session, `/scrub-triage` excludes every session with a resolved
+  verdict, and `appendVerdictToOther` refuses `trash` outright. Extending triage would open a measured
+  surface and is a separate change.
+- **No sixth state and no retention marker in a name.** `cerrado:` is `hecho:` with one more syllable,
+  and a marker in the picker would be a second writer of a fact the entry owns — it would go stale on
+  retraction. Measured pressure: an agent already improvised `hecho: cerrado: …`, and the answer is to
+  make the existing state sufficient, not to add a sixth.
+- **No `POLICY_TEMPLATE` change from the retention axis.** The state → verdict table still agrees with
+  `verdictFromState`; MP-02's table test staying green is the signal that the fix landed in the right
+  layer.
+- **No triage grammar, exclusion or row-shape change, and no picker change.** Pi renders
+  `session.name ?? session.firstMessage`; retention stays in `/scrub`, which already lists every
+  session with its verdict.
+- **`--update` merges nothing human.** The diff is the record of what leaves; the human accepts it or
+  does not run the command. No version marker inside the block, and no automatic invocation.
+- **The guards that already held are untouched:** path components through `basename`, the parse → back
+  up → write → verify order, and the trash and backup roots staying outside Pi's `sessions/`. Moving a
+  symlink is not writing through one — `rename` moves the link itself — so the moves keep their
+  behaviour and only the restore refusal is pinned.
+- **Compact rows and digest packs** (`formatCompactRow`, `formatDigestPack`) are rendered by Pi's own
+  text renderer, not components handed a frame, so the width contract does not apply to them. Any
+  re-layout of the call line (multi-line, columns) is out: one line is the contract.
