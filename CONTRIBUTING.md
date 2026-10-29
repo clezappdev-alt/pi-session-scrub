@@ -125,6 +125,16 @@ Three of those are checked by CI (`.github/workflows/pr-check.yml`), so they can
 be forgotten: the title, the issue reference, and the single `type:*` label. The
 rest — the diff, the tests, the wording — stays human.
 
+The `ceremony` job and both `check` jobs are **required** on `master`: a pull request
+cannot merge while any of them is red. The repository admin can bypass a ruleset, so a
+gate that turns out miscalibrated cannot lock the repository with no way out — and the
+escape hatch is visible here instead of implied. Nobody else can bypass it, which is the
+point: the rule the maintainer's own PR #42 skipped is now a rule for everyone.
+
+"Required" also means the check reads the pull request as it is, not as the event that
+triggered it remembered it — the labels come from the API at check time, so a stale
+`opened` payload cannot fail a PR whose label is right there.
+
 Run the gate locally before opening the PR:
 
 ```bash
