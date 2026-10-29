@@ -50,6 +50,11 @@ concurrency:
 jobs:
   ceremony:
     runs-on: ubuntu-latest
+    # The handoff file is named once, here, and both steps below use this name: the read
+    # writes it, the gate reads it. Two spellings of one path are two things to keep in step
+    # for no gain.
+    env:
+      PR_JSON_PATH: ${{ runner.temp }}/pull-request.json
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -83,9 +88,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: >-
           node .github/scripts/fetch-pull-request.cjs
-          "$GITHUB_REPOSITORY" "$PR_NUMBER" "$RUNNER_TEMP/pull-request.json"
+          "$GITHUB_REPOSITORY" "$PR_NUMBER" "$PR_JSON_PATH"
 
       - name: Check this pull request
-        env:
-          PR_JSON_PATH: ${{ runner.temp }}/pull-request.json
         run: node .github/scripts/pr-ceremony.cjs

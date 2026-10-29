@@ -300,7 +300,9 @@ test("the file wins over the environment, so a stale payload cannot outvote it",
     });
   });
   assert.equal(run.status, 0, run.stdout + run.stderr);
-  assert.equal(run.stdout.match(/✅/g).length, 3, run.stdout);
+  // `?? []`: a gate that prints no green at all is the regression these guard against,
+  // and `.match` would answer `null` — a TypeError instead of the stdout being shown.
+  assert.equal((run.stdout.match(/✅/g) ?? []).length, 3, run.stdout);
 });
 
 test("a file that fails the ceremony fails the gate, with the gate's message", () => {
@@ -332,7 +334,9 @@ test("a local run with no file reads the three variables, as before", () => {
     PR_LABELS: '[{"name":"type:bug"}]',
   });
   assert.equal(run.status, 0, run.stdout + run.stderr);
-  assert.equal(run.stdout.match(/✅/g).length, 3, run.stdout);
+  // `?? []`: a gate that prints no green at all is the regression these guard against,
+  // and `.match` would answer `null` — a TypeError instead of the stdout being shown.
+  assert.equal((run.stdout.match(/✅/g) ?? []).length, 3, run.stdout);
 });
 
 // ---------------------------------------------------------------------------
@@ -447,4 +451,96 @@ test("a read that never succeeds fails the step with the gate's message, and wri
   assert.match(run.result.stderr, /❌ could not read pull request #57 after 3 attempts/);
   assert.match(run.result.stderr, /HTTP 502/);
   assert.equal(run.written, false);
+});
+
+// ---------------------------------------------------------------------------
+// The failures that used to be untested or misreported (issue #59)
+// ---------------------------------------------------------------------------
+//
+// Eight advisory findings from the review of #58. Three of them are a failure the code
+// could produce and no test or message named: a read with no time limit, a response over
+// the size cap, an answer that is empty. One is a raw scalar reported as an empty file.
+
+test("a raw scalar is refused as a scalar, not described as an empty file", () => {
+  for (const raw of [42, true]) {
+    const result = parsePullRequest(raw);
+    assert.equal(result.ok, false, String(raw));
+    assert.match(result.message, new RegExp(`got ${raw}`));
+    // "the file is empty" would send a maintainer looking for a file that was never empty.
+    assert.doesNotMatch(result.message, /is empty/, String(raw));
+  }
+});
+
+test("the reason a file cannot be parsed travels in the message", () => {
+  // The JSON parser's own words are the only clue about what is wrong with the file.
+  const result = parsePullRequest("{");
+  assert.equal(result.ok, false);
+  assert.match(result.message, /not valid JSON \(.+/);
+});
+
+test("an empty answer is a failure, not an empty file", async () => {
+  let attempt = 0;
+  const delays = [];
+  const result = await fetchPullRequest({
+    ...FETCH_ARGS,
+    gh: () => {
+      attempt += 1;
+      return "  \n";
+    },
+    sleep: async (ms) => delays.push(ms),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(attempt, 3);
+  assert.deepEqual(delays, [1000, 2000]);
+  assert.match(result.message, /empty response/);
+});
+
+test("a response bigger than the read accepts says so, not just that it failed", async () => {
+  const result = await fetchPullRequest({
+    ...FETCH_ARGS,
+    attempts: 1,
+    gh: () => {
+      throw Object.assign(new Error("spawnSync gh ENOBUFS"), { code: "ENOBUFS" });
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.message, /larger than the 32 MiB/);
+  // The child process's own words are not a diagnosis a maintainer can act on.
+  assert.doesNotMatch(result.message, /spawnSync/);
+});
+
+// The one that can block a merge in silence: a `gh` that never answers. The real child is
+// killed for real, with a short timeout, so this is the syscall and not a simulation.
+async function withAsyncGhStub(script, run) {
+  const dir = mkdtempSync(join(tmpdir(), "pr-fetch-"));
+  try {
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "gh"), script, { mode: 0o755 });
+    return await run(dir, bin);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("a read that hangs is killed, and the failure names how long it waited", async () => {
+  const result = await withAsyncGhStub(`#!/bin/sh\nsleep 5\n`, async (_dir, bin) => {
+    const saved = process.env.PATH;
+    process.env.PATH = `${bin}:${saved}`;
+    try {
+      return await fetchPullRequest({
+        ...FETCH_ARGS,
+        attempts: 1,
+        timeoutMs: 200,
+        sleep: async () => {
+          throw new Error("a timed-out read must not also back off");
+        },
+      });
+    } finally {
+      process.env.PATH = saved;
+    }
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.message, /timed out after 200ms/);
+  assert.doesNotMatch(result.message, /spawnSync/);
 });
