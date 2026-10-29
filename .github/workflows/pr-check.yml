@@ -1,0 +1,49 @@
+# The PR ceremony gate — the three facts a machine can check without reading the diff.
+#
+# Why this file exists: CONTRIBUTING.md and the pull request template already declared this
+# ceremony (`Closes #N`, one `type:*` label, a Conventional Commit title) and nothing enforced
+# any of it, so every PR so far skipped it — including the maintainer's. A declared rule with
+# no gate is worse than no rule: it looks strict and it trains people to pass it by.
+#
+# `ci.yml` stays the gate that proves the CODE. This one only proves the CEREMONY, which is why
+# it runs on label and title edits too: the label arrives after the body.
+#
+# The checks live in `.github/scripts/pr-ceremony.cjs` and are pinned by its own tests, so the
+# gate can be read, corrected in a pull request, and reproduced locally:
+#
+#   node --test .github/scripts/pr-ceremony.test.cjs
+#   PR_TITLE="fix(scrub): x" PR_BODY="Closes #1" PR_LABELS='[{"name":"type:bug"}]' \
+#     node .github/scripts/pr-ceremony.cjs
+name: pr-ceremony
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  ceremony:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.19.0'
+
+      # The gate's own tests run before the gate: a check that silently passed everything
+      # would be indistinguishable from a green PR.
+      - name: The gate's own tests
+        run: node --test .github/scripts/pr-ceremony.test.cjs
+
+      - name: Check this pull request
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels) }}
+        run: node .github/scripts/pr-ceremony.cjs
