@@ -8,7 +8,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  formatCandidateLine,
   formatCompactRow,
+  formatMarkRefusal,
   formatRestoreResult,
   formatTrashConfirmBody,
   formatTrashResult,
@@ -167,6 +169,61 @@ test("the compact machine row prints unnamed for an absent or blank name", () =>
   assert.equal(blank, "aabbccdd · 1msgs · 0d · unnamed · h");
 });
 
+// --- Candidate row (RA-04: a deletion consent names the session it deletes) ---
+
+test("a named candidate row carries the name it is about", () => {
+  // RA-02 makes a named session reachable as a candidate for the first time. The confirm
+  // reads `Trash session <shortId>?` with this row as its body, so without the name a human
+  // confirms deleting `hecho: respuesta del Discord entregada` while seeing a hex id.
+  const row = formatCandidateLine({
+    shortId: "01a18214",
+    reason: "ephemeral",
+    name: "hecho: respuesta del Discord entregada",
+  });
+  assert.equal(
+    row,
+    'trash-candidate 01a18214 reason=ephemeral named "hecho: respuesta del Discord entregada"',
+  );
+});
+
+test("an unnamed candidate row is byte-identical to the line the audit already printed", () => {
+  for (const name of [undefined, "", "   "]) {
+    assert.equal(
+      formatCandidateLine({ shortId: "01a18214", reason: "explicit-trash", name }),
+      "trash-candidate 01a18214 reason=explicit-trash",
+    );
+  }
+});
+
+test("a name that could close its own quoting is escaped", () => {
+  const row = formatCandidateLine({ shortId: "aabbccdd", reason: "ephemeral", name: 'a "b" c' });
+  assert.equal(row, 'trash-candidate aabbccdd reason=ephemeral named "a \\"b\\" c"');
+});
+
+test("a candidate row bounds the name it quotes, so a long name cannot widen the frame", () => {
+  // Every other row in this module carries a cell budget because Pi aborts the whole TUI on
+  // a component wider than the terminal (measured 2026-10-26: 283 columns). A session name is
+  // free text a human typed with no bound (MAX_TEXT applies to proposed text only), so this
+  // row was the one unbounded path in the audit and in the deletion confirm (review R3-1).
+  const row = formatCandidateLine({
+    shortId: "01a18214",
+    reason: "ephemeral",
+    name: "x".repeat(200),
+  });
+  // 58, not 59: the ellipsis is charged to the budget rather than forgotten, exactly as
+  // `preview` documents it. A row that spends the budget twice is the bug the budget prevents.
+  assert.equal(row, `trash-candidate 01a18214 reason=ephemeral named "${"x".repeat(58)}…"`);
+});
+
+test("a candidate row at the budget is not cut", () => {
+  const row = formatCandidateLine({
+    shortId: "aabbccdd",
+    reason: "ephemeral",
+    name: "y".repeat(60),
+  });
+  assert.equal(row, `trash-candidate aabbccdd reason=ephemeral named "${"y".repeat(60)}"`);
+});
+
 test("the compact machine row truncates a head longer than 120 characters to 120 plus the ellipsis, and leaves a head at exactly 120 untouched", () => {
   const long = formatCompactRow({
     shortId: "aabbccdd",
@@ -182,6 +239,20 @@ test("the compact machine row truncates a head longer than 120 characters to 120
     head: "h".repeat(120),
   });
   assert.equal(exact, `aabbccdd · 1msgs · 0d · unnamed · ${"h".repeat(120)}`);
+});
+
+// --- The refusal scrub_mark returns (R3-2: a whole message, not a fragment) ---
+
+test("the mark refusal interpolates the name and states the two next steps", () => {
+  // Inlined in index.ts this could only be pinned by substring, which passes while the rest
+  // of the sentence is rewritten. The date is not decoration: the sentence is the only thing
+  // the agent reads when a mark is refused, and it must keep naming both the record and the
+  // tool that can change it.
+  assert.equal(
+    formatMarkRefusal("hecho: cerramos"),
+    'This session already declares its state as "hecho: cerramos". The name is the record; ' +
+      "use scrub_close to change it. Nothing was written.",
+  );
 });
 
 // --- Trash confirm body (N3: the reversal sentence stands on its own line) ---

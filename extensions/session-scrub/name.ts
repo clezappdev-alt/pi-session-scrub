@@ -16,14 +16,17 @@
 //   hecho:   nowhere
 //   (none):  nobody declared anything — dirty
 //
-// The name is the single carrier by design. A separate verdict entry would be a second
-// writer, and two writers diverge the moment one write is skipped — leaving a stale
-// promise in /resume, which is worse than no name because a stale promise is trusted.
+// The name is the single carrier of the continuation question by design. A separate
+// verdict entry for the same fact would be a second writer, and two writers diverge the
+// moment one write is skipped — leaving a stale promise in /resume, which is worse than no
+// name because a stale promise is trusted. The retention question is a different fact and
+// has its own single carrier: the verdict entry, which a name cannot express (see
+// resolveVerdict below and classify.ts:RETENTION_VERDICTS).
 //
 // No runtime dependency on Pi. Types are erased by the stripper, so this module is
 // loadable and testable standalone, like classify.ts.
 
-import { VERDICTS, type Verdict } from "./classify.ts";
+import { VERDICTS, isRetentionVerdict, type Verdict } from "./classify.ts";
 
 export const STATE = {
   pausa: "pausa",
@@ -226,20 +229,46 @@ export function verdictFromName(name: string): Verdict | undefined {
 /**
  * Resolve which verdict applies to a session, given both carriers.
  *
- * The name is the record and outranks the verdict entry. Two writers would diverge the
- * moment one write was skipped, and the divergence would be visible as a stale promise
- * in /resume — worse than no name, because a stale promise gets trusted.
+ * The two carriers answer different questions, so neither outranks the other in general:
+ * the name says where what comes next lives, and the entry says whether the session is
+ * worth retaining. `ephemeral` and `trash` are the retention axis and are never derivable
+ * from a name (`verdictFromState` returns neither), so a name cannot cancel them — it
+ * cannot assert what they assert. Resolving them through the name is what let a `hecho:`
+ * close bury an `ephemeral` mark and protect the session for good (measured 2026-10-29: the
+ * session resolved `finished` and `classifySession` reported named-protected, which
+ * `gatherTriageCandidates` then skipped forever).
  *
- * The entry is still consulted when the name declares no state, because sessions
- * written before the convention exist only as entries. Dropping those would silently
- * discard every historical verdict.
+ * Everything the name CAN answer keeps the old precedence: two writers of the same fact
+ * diverge the moment one write is skipped, and a stale promise in /resume is worse than no
+ * name because a stale promise gets trusted. The entry is still consulted when the name
+ * declares no state, so verdicts written before the convention survive.
  */
 export function resolveVerdict(
   name: string,
   entryVerdict: Verdict | undefined,
 ): Verdict | undefined {
+  if (isRetentionVerdict(entryVerdict)) {
+    return entryVerdict;
+  }
   const derived = verdictFromName(name);
   return derived !== undefined ? derived : entryVerdict;
+}
+
+/**
+ * Whether writing `nextVerdict` would change what this session resolves to.
+ *
+ * This is NB-02's refusal in its own words — "a record that cannot take effect" — computed
+ * from the resolution instead of read off the name. "The name declares a state" was the
+ * right test while the name answered both axes; now that retention is separate, a write
+ * that resolves differently must be accepted, or the order of `scrub_close` and
+ * `scrub_mark` keeps deciding the outcome (close first made a correct mark impossible).
+ */
+export function writeTakesEffect(
+  name: string,
+  latestEntryVerdict: Verdict | undefined,
+  nextVerdict: Verdict,
+): boolean {
+  return resolveVerdict(name, latestEntryVerdict) !== resolveVerdict(name, nextVerdict);
 }
 
 /**

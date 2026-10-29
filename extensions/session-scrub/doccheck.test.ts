@@ -231,6 +231,32 @@ test("NB-03: scrub_close offers CLOSE_STATES and never offers traspaso", () => {
   );
 });
 
+test("RA-03: scrub_mark decides with writeTakesEffect and delegates its refusal text", () => {
+  // The handler imports the Pi host, so the runner cannot load it; the claim is pinned as a
+  // source slice. Two halves, and each is asserted where it can be asserted honestly:
+  //   - WHEN it refuses is decided by name.ts:writeTakesEffect, not by asking whether the
+  //     name declares a state;
+  //   - WHAT it says lives in render.ts:formatMarkRefusal, where render.test.ts compares the
+  //     whole message. Inlined here it could only be pinned by substring, which passes while
+  //     the sentence around the fragment is rewritten (review R3-2).
+  const handler = sourceSlice(INDEX_TS, "async function handleScrubMark(", "\n}\n");
+  assert.match(
+    handler,
+    /writeTakesEffect\(/,
+    "handleScrubMark must decide with name.ts:writeTakesEffect, not by asking whether the name declares a state",
+  );
+  assert.match(
+    handler,
+    /formatMarkRefusal\(/,
+    "the refusal text must come from render.ts:formatMarkRefusal so it can be asserted whole",
+  );
+  assert.equal(
+    handler.includes("The name is the record"),
+    false,
+    "the refusal text must not be inlined in the handler again",
+  );
+});
+
 test("NB-04: the origin's traspaso is written after the destination is named", () => {
   // The promise is the last write. A cancelled newSession must write nothing, and a
   // handoff cannot announce a continuation by rename before the destination exists.

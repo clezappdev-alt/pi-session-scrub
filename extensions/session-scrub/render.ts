@@ -43,6 +43,18 @@ const ELLIPSIS = "…";
 /** Compact-row head budget: 120 raw characters plus the ellipsis when something was cut. */
 const COMPACT_HEAD_MAX = 120;
 
+/**
+ * Widest raw session name a candidate row quotes, in cells.
+ *
+ * A candidate row is printed by `/scrub` and, as the body of the per-item confirm, by
+ * `/scrub:apply`. It is the only row in this module whose text a human typed: `MAX_TEXT`
+ * bounds what the extension *proposes*, never what `/name` accepted, so an unbounded name
+ * here was the one path that could exceed the terminal width this module exists to respect.
+ * 60 cells matches `name.ts:MAX_TEXT`, so the row is as wide as the name the convention
+ * would have proposed.
+ */
+const CANDIDATE_NAME_MAX = 60;
+
 /** Escape backslashes and double quotes so the value cannot close its own quoting. */
 export function escapeQuote(text: string): string {
   return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -279,6 +291,57 @@ export function formatTrashConfirmBody(auditLine: string, detail: string): strin
 /** The counted noun of the post-run lines (N4): singular only for exactly one. */
 function sessions(count: number): string {
   return count === 1 ? "1 session" : `${count} sessions`;
+}
+
+/**
+ * One audit row for a session the classifier marked as a disposal candidate (RA-04).
+ *
+ * The reason is the verdict that made it a candidate; the name, when there is one, is the
+ * identification. Both matter here and only here: this row is the body of the per-item
+ * deletion confirm (`Trash session <shortId>?`), and since RA-02 a candidate can be a NAMED
+ * session for the first time — before it, a name always meant named-protected, so a row
+ * never needed to say which name it was about. A hex id alone is not consent to delete
+ * `hecho: respuesta del Discord entregada`.
+ *
+ * An absent or blank name renders exactly the row the audit printed before this existed, so
+ * no unnamed candidate changes shape. The name is quoted through `escapeQuote`, the same
+ * guard `formatCompactRow` uses: a name must not be able to close its own quoting, and the
+ * budget is applied to the RAW name before quoting so an escape sequence is never split.
+ *
+ * Accepted cost of that order: a name made only of quotes escapes to twice its length, so
+ * the quoted form can reach `2 x CANDIDATE_NAME_MAX`. That is still far below the 283-column
+ * frame that aborted the TUI on 2026-10-26, which is the failure this budget answers.
+ */
+export function formatCandidateLine(args: {
+  shortId: string;
+  reason: string;
+  name?: string;
+}): string {
+  const head = `trash-candidate ${args.shortId} reason=${args.reason}`;
+  const raw = args.name;
+  if (raw === undefined || raw.trim().length === 0) {
+    return head;
+  }
+  const bounded =
+    textCells(raw) <= CANDIDATE_NAME_MAX
+      ? raw
+      : fitCells(raw, CANDIDATE_NAME_MAX - textCells(ELLIPSIS)) + ELLIPSIS;
+  return `${head} named "${escapeQuote(bounded)}"`;
+}
+
+/**
+ * The refusal `scrub_mark` returns when the name already overrides the write (NB-02, RA-03).
+ *
+ * Its own function, not a literal inside the handler, for the reason the review gave it
+ * (R3-2): `index.ts` cannot be loaded by the runner, so a message inlined there can only be
+ * pinned by substring matching, which passes while the sentence around it is rewritten. Here
+ * the whole string is assertable, and the handler is reduced to calling it.
+ */
+export function formatMarkRefusal(currentName: string): string {
+  return (
+    `This session already declares its state as "${currentName}". The name is the record; ` +
+    `use scrub_close to change it. Nothing was written.`
+  );
 }
 
 /** Pluralized post-run line of /scrub-apply (N4): `Trashed <n> session(s). Remaining: <r>.` */
