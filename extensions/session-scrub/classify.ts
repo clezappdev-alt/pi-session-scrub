@@ -47,11 +47,25 @@ export type Verdict = (typeof VERDICTS)[keyof typeof VERDICTS];
  * let a name hide one from the candidate set. A second copy would be a second place to
  * forget a value.
  */
-export const RETENTION_VERDICTS: readonly Verdict[] = [VERDICTS.ephemeral, VERDICTS.trash];
+export const RETENTION_VERDICTS = [VERDICTS.ephemeral, VERDICTS.trash] as const;
 
-/** Whether a verdict is a retention claim (see RETENTION_VERDICTS). */
-export function isRetentionVerdict(verdict: Verdict | undefined): boolean {
-  return verdict !== undefined && RETENTION_VERDICTS.includes(verdict);
+/** A verdict that answers the retention question. */
+export type RetentionVerdict = (typeof RETENTION_VERDICTS)[number];
+
+/**
+ * Whether a verdict is a retention claim (see RETENTION_VERDICTS).
+ *
+ * A type predicate rather than a plain boolean: `classifySession` must narrow before it maps
+ * the verdict to its candidate reason, and a cast at that call site would be the duplicated
+ * branch this function exists to remove (review R2-002).
+ */
+export function isRetentionVerdict(verdict: Verdict | undefined): verdict is RetentionVerdict {
+  return verdict === VERDICTS.ephemeral || verdict === VERDICTS.trash;
+}
+
+/** The candidate reason a retention verdict carries. One mapping, one place. */
+function retentionReason(verdict: RetentionVerdict): CandidateReason {
+  return verdict === VERDICTS.trash ? CANDIDATE_REASON.explicitTrash : CANDIDATE_REASON.ephemeral;
 }
 
 export const CLASS_KIND = {
@@ -188,17 +202,10 @@ export function classifySession(
   // one from the candidate set. Measured 2026-10-29: a correctly marked ephemeral session
   // closed as `hecho:` resolved `finished`, this branch never ran, and the session stayed
   // named-protected for good — the close destroyed the classification it was recording.
-  if (verdict === VERDICTS.trash) {
+  if (isRetentionVerdict(verdict)) {
     return {
       kind: CLASS_KIND.candidate,
-      reason: CANDIDATE_REASON.explicitTrash,
-      verdict,
-    };
-  }
-  if (verdict === VERDICTS.ephemeral) {
-    return {
-      kind: CLASS_KIND.candidate,
-      reason: CANDIDATE_REASON.ephemeral,
+      reason: retentionReason(verdict),
       verdict,
     };
   }

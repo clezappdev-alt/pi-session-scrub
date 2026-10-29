@@ -70,6 +70,7 @@ import {
   escapeQuote,
   formatCandidateLine,
   formatCompactRow,
+  formatMarkRefusal,
   formatRestoreResult,
   formatTrashConfirmBody,
   formatTrashResult,
@@ -681,16 +682,20 @@ async function handleScrubMark(
   // derivable from a name. Marking an ephemeral flow after closing the session was
   // impossible, so the order of scrub_close and scrub_mark decided the outcome.
   const currentName = ctx.sessionManager.getSessionName() ?? "";
-  const latestVerdict = readLatestVerdict(ctx.sessionManager.getEntries());
-  if (
-    parseName(currentName).state !== undefined &&
-    !writeTakesEffect(currentName, latestVerdict, params.verdict)
-  ) {
-    return toolResult(
-      `This session already declares its state as "${currentName}". The name is the record; ` +
-        `use scrub_close to change it. Nothing was written.`,
-      false,
+  // Two named facts instead of one compound condition (review R2-001): a name that declares
+  // a state is what makes a refusal possible at all, and a write whose resolution does not
+  // change is what makes it correct. The entry is read only under the first, because an
+  // unnamed session accepts every verdict — reading it on the common path was dead work.
+  const declaredState = parseName(currentName).state !== undefined;
+  const writeIsInert =
+    declaredState &&
+    !writeTakesEffect(
+      currentName,
+      readLatestVerdict(ctx.sessionManager.getEntries()),
+      params.verdict,
     );
+  if (writeIsInert) {
+    return toolResult(formatMarkRefusal(currentName), false);
   }
   const liveFile = ctx.sessionManager.getSessionFile();
   if (liveFile === undefined) {

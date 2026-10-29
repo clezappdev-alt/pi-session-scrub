@@ -231,25 +231,29 @@ test("NB-03: scrub_close offers CLOSE_STATES and never offers traspaso", () => {
   );
 });
 
-test("RA-03: scrub_mark refuses through writeTakesEffect and keeps its refusal text", () => {
-  // The handler imports the Pi host, so the runner cannot load it; both halves of RA-03 are
-  // therefore pinned as a source slice. The refusal must be COMPUTED from the resolution —
-  // "the name declares a state" refused writes that do take effect — and the sentence the
-  // agent reads must stay byte-identical, because this change alters when it fires and never
-  // what it says.
+test("RA-03: scrub_mark decides with writeTakesEffect and delegates its refusal text", () => {
+  // The handler imports the Pi host, so the runner cannot load it; the claim is pinned as a
+  // source slice. Two halves, and each is asserted where it can be asserted honestly:
+  //   - WHEN it refuses is decided by name.ts:writeTakesEffect, not by asking whether the
+  //     name declares a state;
+  //   - WHAT it says lives in render.ts:formatMarkRefusal, where render.test.ts compares the
+  //     whole message. Inlined here it could only be pinned by substring, which passes while
+  //     the sentence around the fragment is rewritten (review R3-2).
   const handler = sourceSlice(INDEX_TS, "async function handleScrubMark(", "\n}\n");
   assert.match(
     handler,
     /writeTakesEffect\(/,
     "handleScrubMark must decide with name.ts:writeTakesEffect, not by asking whether the name declares a state",
   );
-  assert.ok(
-    handler.includes("The name is the record; "),
-    "the refusal's first sentence must stay byte-identical",
+  assert.match(
+    handler,
+    /formatMarkRefusal\(/,
+    "the refusal text must come from render.ts:formatMarkRefusal so it can be asserted whole",
   );
-  assert.ok(
-    handler.includes("use scrub_close to change it. Nothing was written."),
-    "the refusal's second sentence must stay byte-identical",
+  assert.equal(
+    handler.includes("The name is the record"),
+    false,
+    "the refusal text must not be inlined in the handler again",
   );
 });
 

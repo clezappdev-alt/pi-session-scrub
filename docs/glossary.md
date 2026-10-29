@@ -36,7 +36,7 @@ proyecto.
 ## 2. Clasificación del audit
 
 Cada sesión cae en **un** `kind` (`classify.ts:41`), y el audit lo imprime con un token fijo
-(`formatAuditLine`, `index.ts:167`).
+(`formatAuditLine`, `index.ts:168`).
 
 | `kind` | Token en el audit | Qué significa | Dónde |
 | --- | --- | --- | --- |
@@ -70,7 +70,7 @@ nombre**: por eso P8 se clasifica `candidate` aunque tenga nombre (`classify.ts:
 **`ephemeral-flows`** es la única clave que la extensión lee de la política: un bloque en
 `AGENTS.md` del proyecto, entre los marcadores `<!-- pi-session-scrub:start -->` y
 `end -->`. Todo lo demás del bloque es guía para el agente, no configuración
-(`parsePolicyBlock`, `policy.ts:97`; `readPolicyConfig`, `index.ts:257`).
+(`parsePolicyBlock`, `policy.ts:97`; `readPolicyConfig`, `index.ts:258`).
 
 ---
 
@@ -81,23 +81,23 @@ nombre**: por eso P8 se clasifica `candidate` aunque tenga nombre (`classify.ts:
 | Grado | Qué es | Dónde |
 | --- | --- | --- |
 | **`machine`** (machine keep) | Sesión **nombrada** sin veredicto. El nombre ya declara el estado, así que la extensión **no opina**: propone `keep` como **hecho**, con la rationale `named session — presumed active`. | `index.ts:809`, `index.ts:1430` |
-| **`weak`** | Sesión **sin nombre**. La extensión no puede saber: mira edad y mensajes y **adivina**. | `index.ts:809`, `index.ts:1127` |
+| **`weak`** | Sesión **sin nombre**. La extensión no puede saber: mira edad y mensajes y **adivina**. | `index.ts:809`, `index.ts:1132` |
 | **`judged`** | Ya lo decidió el humano. | `index.ts:809` |
 
 **weak guess** = la adivinanza de una fila `weak`: `finished` si la edad ≥ `MAX_AGE_MS`,
-si no `paused` (`suggestTriageWeak`, `index.ts:1127`). Siempre viaja etiquetada
+si no `paused` (`suggestTriageWeak`, `index.ts:1132`). Siempre viaja etiquetada
 `(WEAK — judge from head/tail, never auto-confirm)`: es una sugerencia para leer las
 palabras, **nunca** una decisión.
 
 **machine keep** = la fila `machine`. Cuando se confirman en bloque, el veredicto escrito es
 `keep` con la rationale `machine keep, bulk-confirmed <fecha ISO>`
-(`bulkKeepRationale`, `index.ts:1462`).
+(`bulkKeepRationale`, `index.ts:1467`).
 
 **La fila compacta de una machine row no lleva guess.** La fila compacta sólo renderiza
 filas `machine`, y su propuesta es el hecho `keep`; por eso el campo de guess se quitó del
-esquema (`formatCompactRow`, `render.ts:243`; `spec.md` UX-02). El guess vive donde
+esquema (`formatCompactRow`, `render.ts:255`; `spec.md` UX-02). El guess vive donde
 corresponde: en el pack de una fila `weak` (`weak-guess:`, `formatDigestPack`,
-`index.ts:1419`).
+`index.ts:1424`).
 
 **Queda una excepción, y es deliberada — no la leas como si el problema estuviera resuelto en
 todos lados.** Bajo `--verbose`, una machine row recibe *además* su pack completo, y ese pack
@@ -113,11 +113,11 @@ tomada; es deuda registrada, no comportamiento deseado.
 
 | Término | Qué es | Dónde |
 | --- | --- | --- |
-| **pack** (digest pack) | Bloque completo de una sesión: `head` (primeros 300c), `tail` (últimos 300c cronológicos), msgs, edad, created/modified ISO, rationale. | `formatDigestPack`, `index.ts:1419` |
+| **pack** (digest pack) | Bloque completo de una sesión: `head` (primeros 300c), `tail` (últimos 300c cronológicos), msgs, edad, created/modified ISO, rationale. | `formatDigestPack`, `index.ts:1424` |
 | **head** / **tail** | Las dos ventanas de texto del pack, 300 caracteres cada una. | `index.ts:816-817` |
-| **fila compacta** | Una línea, formato por defecto para filas `machine`: `<id> · <n>msgs · <d>d · named "<nombre>"\|unnamed · <head≤121>`. El `named "…"` es entrecomillado por el renderer; el `<head>` no lleva comillas propias (sólo se escapan las que traiga adentro). **Sin campo de guess.** | `render.ts:243` |
+| **fila compacta** | Una línea, formato por defecto para filas `machine`: `<id> · <n>msgs · <d>d · named "<nombre>"\|unnamed · <head≤121>`. El `named "…"` es entrecomillado por el renderer; el `<head>` no lleva comillas propias (sólo se escapan las que traiga adentro). **Sin campo de guess.** | `render.ts:255` |
 | **pack cap** | Máximo 20 packs por corrida; el resto se lista como `deferred`. | `index.ts:818` |
-| **deferred** | Sesiones que no entraron en el cap: sólo ids, sin packs ni guesses. | `index.ts:1579`, `index.ts:1462` |
+| **deferred** | Sesiones que no entraron en el cap: sólo ids, sin packs ni guesses. | `index.ts:1579`, `index.ts:1467` |
 
 ---
 
@@ -167,4 +167,4 @@ pantalla, no es un bug: es otro conjunto.
 **`Remaining` no es el total del audit.** El audit cuenta la sesión viva aunque no tenga
 archivo; `Remaining` cuenta lo que devuelve `SessionManager.list` después del movimiento,
 que no la incluye. Son dos preguntas distintas, las dos bien contestadas
-(`formatTrashResult`, `render.ts:311`).
+(`formatTrashResult`, `render.ts:348`).
