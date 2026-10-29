@@ -76,13 +76,13 @@ nombre**: por eso P8 se clasifica `candidate` aunque tenga nombre (`classify.ts:
 
 ## 4. Grados de triage: hecho vs adivinanza
 
-`TRIAGE_GRADE` (`index.ts:809`). Esto es lo que decide **si la extensión sabe o supone**.
+`TRIAGE_GRADE` (`index.ts:945`). Esto es lo que decide **si la extensión sabe o supone**.
 
 | Grado | Qué es | Dónde |
 | --- | --- | --- |
-| **`machine`** (machine keep) | Sesión **nombrada** sin veredicto. El nombre ya declara el estado, así que la extensión **no opina**: propone `keep` como **hecho**, con la rationale `named session — presumed active`. | `index.ts:809`, `index.ts:1430` |
-| **`weak`** | Sesión **sin nombre**. La extensión no puede saber: mira edad y mensajes y **adivina**. | `index.ts:809`, `index.ts:1132` |
-| **`judged`** | Ya lo decidió el humano. | `index.ts:809` |
+| **`machine`** (machine keep) | Sesión **nombrada** sin veredicto. El nombre ya declara el estado, así que la extensión **no opina**: propone `keep` como **hecho**, con la rationale `named session — presumed active`. | `index.ts:945`, `index.ts:1430` |
+| **`weak`** | Sesión **sin nombre**. La extensión no puede saber: mira edad y mensajes y **adivina**. | `index.ts:945`, `index.ts:1132` |
+| **`judged`** | Ya lo decidió el humano. | `index.ts:945` |
 
 **weak guess** = la adivinanza de una fila `weak`: `finished` si la edad ≥ `MAX_AGE_MS`,
 si no `paused` (`suggestTriageWeak`, `index.ts:1132`). Siempre viaja etiquetada
@@ -117,7 +117,7 @@ tomada; es deuda registrada, no comportamiento deseado.
 | **head** / **tail** | Las dos ventanas de texto del pack, 300 caracteres cada una. | `index.ts:816-817` |
 | **fila compacta** | Una línea, formato por defecto para filas `machine`: `<id> · <n>msgs · <d>d · named "<nombre>"\|unnamed · <head≤121>`. El `named "…"` es entrecomillado por el renderer; el `<head>` no lleva comillas propias (sólo se escapan las que traiga adentro). **Sin campo de guess.** | `render.ts:255` |
 | **pack cap** | Máximo 20 packs por corrida; el resto se lista como `deferred`. | `index.ts:818` |
-| **deferred** | Sesiones que no entraron en el cap: sólo ids, sin packs ni guesses. | `index.ts:1579`, `index.ts:1467` |
+| **deferred** | Sesiones que no entraron en el cap: sólo ids, sin packs ni guesses. | `index.ts:1579`, `index.ts:1598` |
 
 ---
 
