@@ -237,8 +237,9 @@ Output is one `notify(info)` with the summary line plus one `index.ts:formatAudi
 per session (`live …`, `kept <id> named "…"`, `auto <id> empty`,
 `trash-candidate <id> reason=<reason>[ named "…"]` (`render.ts:formatCandidateLine`:
 the name is there because RA-02 makes a named session reachable as a candidate, and this
-row is the body of the deletion confirm; the quoted name is bounded to 60 cells, because a
-name is free text a human typed and every row here must stay inside the terminal frame),
+row is the body of the deletion confirm; the quoted name is bounded to 60 cells and a cut
+name ends in `…`, because a name is free text a human typed and every row here must stay
+inside the terminal frame),
 `review <id> msgs=… modified=… first="…"`,
 `kept <id> <reason>`). Fully idempotent and side-effect free: no write, no
 `mkdirSync`, no confirm, no trash-dir creation. A malformed session file reads as
