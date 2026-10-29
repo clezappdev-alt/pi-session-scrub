@@ -5,6 +5,49 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-29
+
+**The name and the verdict now answer different questions.** A session name says where
+what comes next lives; a verdict says whether the session is worth keeping. `ephemeral`
+and `trash` are the retention axis and no name can express them, so recording one and
+then closing the session used to destroy the classification.
+
+### Added
+
+- `/scrub:init --update` refreshes a policy block that is already in `AGENTS.md` instead
+  of refusing with "already present". It backs the file up first, shows what changed,
+  keeps the human's `ephemeral-flows:` value verbatim, and writes nothing when the diff
+  would be empty.
+
+### Fixed
+
+- **A retention verdict survives the session name.** Marking a session `ephemeral` and
+  closing it as `hecho:` used to resolve to `finished`, and the session became
+  `named-protected` for good — the complete ritual destroyed the classification. An
+  explicit `trash` was resurrected by any later rename, contradicting the rule that a
+  named session is protected only when it is not condemned.
+- `scrub_mark` refuses only a write that cannot take effect. Marking an ephemeral flow
+  after closing the session, which used to be impossible, now works; the refusal text is
+  unchanged.
+- A candidate row carries the session name it is about, and bounds it. The row is the
+  body of the deletion confirm, and a hex id is not consent to delete a named session.
+- `/scrub:init --update` no longer invents changes in its diff; context lines are shown
+  as context.
+- The shipped policy block makes its `session_rename` rule conditional and states the
+  precedence between the name and the verdict. Projects that already wrote a block get
+  the new text with `/scrub:init --update`.
+- `docs/glossary.md` citations point at the code again, and the citation gate reads the
+  line it names instead of only checking that the line exists.
+
+### Changed
+
+- Root `README.md` is an entry page a stranger can scan, not a manual; `docs/guide.md`
+  stops describing the pre-0.5.0 handoff and leads with the two-actor path;
+  `docs/behavior.md` speaks Pi's vocabulary (extension and package, not plugin).
+- The repository enforces its own pull-request ceremony in CI — Conventional Commit
+  title, a linked issue, exactly one `type:*` label — because it was declared in
+  `CONTRIBUTING.md` and enforced nowhere.
+
 ## [0.6.1] - 2026-10-27
 
 ### Fixed
