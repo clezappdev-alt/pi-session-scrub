@@ -76,6 +76,29 @@ class ReadFailure extends Error {
 }
 
 /**
+ * The useful head of a killed read's stderr, as one line — or `""` when it printed nothing.
+ *
+ * Keeping the stderr at all was the point of the previous change; keeping all of it is not.
+ * A hung child can have printed anything up to the buffer it was handed, and this sentence
+ * goes to a required check's log, so the debug detail is bounded on purpose: three lines is
+ * an error and its context, and 400 characters fits a log viewer without a second look. Both
+ * `undefined` and `null` mean "nothing": a child that never wrote has no stderr to quote.
+ */
+const STDERR_PREFIX_LINES = 3;
+const STDERR_PREFIX_CHARS = 400;
+
+function stderrPrefix(stderr) {
+  const text = String(stderr ?? "").trim();
+  if (text === "") return "";
+  const lines = text.split(/\r?\n/);
+  const kept = lines.slice(0, STDERR_PREFIX_LINES).join(" | ").trim();
+  const cut = lines.length > STDERR_PREFIX_LINES || kept.length > STDERR_PREFIX_CHARS;
+  const head =
+    kept.length > STDERR_PREFIX_CHARS ? kept.slice(0, STDERR_PREFIX_CHARS).trimEnd() : kept;
+  return cut ? `${head} (truncated)` : head;
+}
+
+/**
  * What the real read says when it fails, in the words a maintainer needs to act on it.
  *
  * This runs inside `readFromApi` and nowhere else, which is the whole point: `err.code` is
@@ -84,20 +107,25 @@ class ReadFailure extends Error {
  * an environment fact rather than a pull request one.
  */
 function describeReadFailure(err, timeoutMs, maxBufferBytes) {
-  const stderr = err && err.stderr === undefined ? "" : String(err.stderr).trim();
-  if (err && err.code === "ENOENT") {
+  // One guarded read of the code, and then a field per branch: the guards and the extraction
+  // say the same thing, so nobody has to wonder whether a null was ever possible here.
+  const code = err === null || err === undefined ? undefined : err.code;
+  if (code === "ENOENT") {
     return (
       "there is no `gh` on PATH, so nothing could read the pull request: this runner is " +
       "missing the GitHub CLI, not the pull request"
     );
   }
-  if (err && err.code === "ETIMEDOUT") {
+  if (code === "ETIMEDOUT") {
     // A killed read may already have printed the useful part of the diagnosis; the deadline
-    // is what ended it, not everything it said.
-    const printed = stderr === "" ? "" : `; it had printed: ${stderr}`;
-    return `the read timed out after ${timeoutMs}ms${printed}`;
+    // is what ended it, not everything it said — and not everything is worth carrying.
+    const printed = stderrPrefix(err.stderr);
+    return (
+      `the read timed out after ${timeoutMs}ms` +
+      (printed === "" ? "" : `; it had printed: ${printed}`)
+    );
   }
-  if (err && err.code === "ENOBUFS") {
+  if (code === "ENOBUFS") {
     return `the response was larger than the ${sizeOf(maxBufferBytes)} this read accepts`;
   }
   return reasonOf(err);
@@ -235,8 +263,11 @@ module.exports = {
   fetchPullRequest,
   readFailure,
   sizeOf,
+  stderrPrefix,
   ATTEMPTS,
   BACKOFF_MS,
   READ_TIMEOUT_MS,
   MAX_RESPONSE_BYTES,
+  STDERR_PREFIX_LINES,
+  STDERR_PREFIX_CHARS,
 };

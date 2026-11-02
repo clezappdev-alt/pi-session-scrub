@@ -351,7 +351,7 @@ test("a local run with no file reads the three variables, as before", () => {
 // retry is bounded on purpose — an outage that outlives three attempts is a failure of the
 // gate, said out loud, and never a green check nobody verified.
 
-const { fetchPullRequest, sizeOf } = require("./fetch-pull-request.cjs");
+const { fetchPullRequest, sizeOf, stderrPrefix } = require("./fetch-pull-request.cjs");
 
 const FETCH_ARGS = { repository: "owner/repo", number: 57 };
 
@@ -654,4 +654,57 @@ test("a byte count reads as bytes below a MiB and as one decimal at or above", (
   assert.equal(sizeOf(1024 * 1024 + 1), "1.0 MiB");
   assert.equal(sizeOf(1512 * 1024), "1.5 MiB");
   assert.equal(sizeOf(32 * 1024 * 1024), "32.0 MiB");
+});
+
+// ---------------------------------------------------------------------------
+// What a killed read is allowed to say (the WARNING of its own review)
+// ---------------------------------------------------------------------------
+//
+// Keeping `gh`'s stderr was the point of the previous commit; keeping all of it is not. A
+// hung child can have printed anything up to the buffer it was given, and the sentence this
+// process prints goes to a workflow log.
+
+test("a stderr prefix is one line's worth, and says when it cut something", () => {
+  // Absent is absent, in both of the shapes Node and a test can produce.
+  assert.equal(stderrPrefix(undefined), "");
+  assert.equal(stderrPrefix(null), "");
+  assert.equal(stderrPrefix("  \n\t"), "");
+  assert.equal(stderrPrefix("HTTP 502: Bad Gateway"), "HTTP 502: Bad Gateway");
+
+  const many = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
+  const prefix = stderrPrefix(many);
+  assert.match(prefix, /^line 1 \| line 2 \| line 3/);
+  assert.match(prefix, /\(truncated\)$/);
+  // The tail is what gets dropped: a maintainer needs the first error, not the last frame.
+  assert.doesNotMatch(prefix, /line 10/);
+
+  const long = "x".repeat(5000);
+  assert.ok(stderrPrefix(long).length < 500, `got ${stderrPrefix(long).length}`);
+  assert.match(stderrPrefix(long), /\(truncated\)$/);
+});
+
+test("a chatty read that hangs is reported as a prefix, not as its whole output", async () => {
+  const spam = Array.from(
+    { length: 40 },
+    (_, i) => `line ${i + 1} of the proxy handshake`,
+  ).join("\n");
+  const result = await withAsyncGhStub(
+    `#!/bin/sh\nprintf '%s\\n' '${spam}' >&2\nsleep 5\n`,
+    async (_dir, bin) => {
+      const saved = process.env.PATH;
+      process.env.PATH = `${bin}:${saved}`;
+      try {
+        return await fetchPullRequest({ ...FETCH_ARGS, attempts: 1, timeoutMs: 200 });
+      } finally {
+        process.env.PATH = saved;
+      }
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.message, /timed out after 200ms/);
+  assert.match(result.message, /line 1 of the proxy handshake/);
+  // The whole dump in a required check's log is the failure mode this bounds.
+  assert.match(result.message, /\(truncated\)/);
+  assert.doesNotMatch(result.message, /line 40 of the proxy handshake/);
+  assert.ok(result.message.length < 1000, `message was ${result.message.length} chars`);
 });
