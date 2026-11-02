@@ -51,18 +51,81 @@ const READ_TIMEOUT_MS = 15_000;
  */
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 
-/** A byte count the way a message should say it: MiB while it is large, bytes when not. */
+/**
+ * A byte count the way a message should say it: bytes below a MiB, one decimal of a MiB at
+ * or above it.
+ *
+ * Both the threshold and the format are chosen here, once. The arithmetic's own leftovers
+ * are neither: an unrounded quotient prints fifteen digits of a number nobody can act on,
+ * and a rounded whole MiB reports 1.4 MiB as "1 MiB". One decimal is wrong by less than the
+ * reader cares about and never needs a second look.
+ */
 function sizeOf(bytes) {
-  return bytes >= 1024 * 1024 ? `${bytes / (1024 * 1024)} MiB` : `${bytes} bytes`;
+  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MiB` : `${bytes} bytes`;
 }
 
-/** What a failed read says, in the words a maintainer needs to act on it. */
-function readFailure(err, timeoutMs, maxBufferBytes) {
-  // Node reports both of these with an empty stderr and a `spawnSync …` message that names
-  // the syscall rather than the cause, so they are classified before `reasonOf` sees them.
-  if (err && err.code === "ETIMEDOUT") return `the read timed out after ${timeoutMs}ms`;
-  if (err && err.code === "ENOBUFS") {
-    // The cap that applied, not the default one: a caller may set its own.
+/**
+ * A failed read whose sentence is already composed, because only the layer that applied the
+ * limit knows which limit it was.
+ */
+class ReadFailure extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ReadFailure";
+  }
+}
+
+/**
+ * The useful head of a killed read's stderr, as one line — or `""` when it printed nothing.
+ *
+ * Keeping the stderr at all was the point of the previous change; keeping all of it is not.
+ * A hung child can have printed anything up to the buffer it was handed, and this sentence
+ * goes to a required check's log, so the debug detail is bounded on purpose: three lines is
+ * an error and its context, and 400 characters fits a log viewer without a second look. Both
+ * `undefined` and `null` mean "nothing": a child that never wrote has no stderr to quote.
+ */
+const STDERR_PREFIX_LINES = 3;
+const STDERR_PREFIX_CHARS = 400;
+
+function stderrPrefix(stderr) {
+  const text = String(stderr ?? "").trim();
+  if (text === "") return "";
+  const lines = text.split(/\r?\n/);
+  const kept = lines.slice(0, STDERR_PREFIX_LINES).join(" | ").trim();
+  const cut = lines.length > STDERR_PREFIX_LINES || kept.length > STDERR_PREFIX_CHARS;
+  const head =
+    kept.length > STDERR_PREFIX_CHARS ? kept.slice(0, STDERR_PREFIX_CHARS).trimEnd() : kept;
+  return cut ? `${head} (truncated)` : head;
+}
+
+/**
+ * What the real read says when it fails, in the words a maintainer needs to act on it.
+ *
+ * This runs inside `readFromApi` and nowhere else, which is the whole point: `err.code` is
+ * Node's contract for `execFileSync`'s own errors, `timeoutMs` and `maxBufferBytes` are the
+ * values that child was actually given, and `PROGRAM ENOENT` — a runner without `gh` — is
+ * an environment fact rather than a pull request one.
+ */
+function describeReadFailure(err, timeoutMs, maxBufferBytes) {
+  // One guarded read of the code, and then a field per branch: the guards and the extraction
+  // say the same thing, so nobody has to wonder whether a null was ever possible here.
+  const code = err === null || err === undefined ? undefined : err.code;
+  if (code === "ENOENT") {
+    return (
+      "there is no `gh` on PATH, so nothing could read the pull request: this runner is " +
+      "missing the GitHub CLI, not the pull request"
+    );
+  }
+  if (code === "ETIMEDOUT") {
+    // A killed read may already have printed the useful part of the diagnosis; the deadline
+    // is what ended it, not everything it said — and not everything is worth carrying.
+    const printed = stderrPrefix(err.stderr);
+    return (
+      `the read timed out after ${timeoutMs}ms` +
+      (printed === "" ? "" : `; it had printed: ${printed}`)
+    );
+  }
+  if (code === "ENOBUFS") {
     return `the response was larger than the ${sizeOf(maxBufferBytes)} this read accepts`;
   }
   return reasonOf(err);
@@ -70,12 +133,29 @@ function readFailure(err, timeoutMs, maxBufferBytes) {
 
 /** The real read: `gh` with the job's token, from the environment. */
 function readFromApi(args, timeoutMs, maxBufferBytes) {
-  return execFileSync("gh", args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    maxBuffer: maxBufferBytes,
-    timeout: timeoutMs,
-  });
+  try {
+    return execFileSync("gh", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: maxBufferBytes,
+      timeout: timeoutMs,
+    });
+  } catch (err) {
+    throw new ReadFailure(describeReadFailure(err, timeoutMs, maxBufferBytes));
+  }
+}
+
+/**
+ * What a failed attempt says, in the words a maintainer needs to act on it.
+ *
+ * A failure the real read diagnosed passes through untouched. Anything else came from a read
+ * that was handed in — a test stub, another client — and speaks with its own words: its
+ * `err.code` is not Node's, so reading it here would invent a diagnosis about a limit this
+ * process never applied.
+ */
+function readFailure(err) {
+  if (err instanceof ReadFailure) return err.message;
+  return reasonOf(err);
 }
 
 function defaultSleep(ms) {
@@ -90,9 +170,8 @@ function defaultSleep(ms) {
  * @param {string|number} options.number The pull request number.
  * @param {number} [options.timeoutMs] How long one attempt may take before it is killed.
  * @param {number} [options.maxBufferBytes] How large one answer may be.
- *   Both bound the default reader. An injected `gh` owns its own limits, and these then only
- *   describe how its failures are reported — a failure classified from an injected reader
- *   names the configured limit, which may not be the one that fired.
+ *   Both bound the default reader, and only the default reader names them: an injected `gh`
+ *   owns its own limits and its own failures, so its error is reported in its own words.
  * @param {(args: string[]) => string} [options.gh] The read, injected so it can be tested.
  * @returns {Promise<{ ok: true, json: string } | { ok: false, message: string }>}
  */
@@ -116,7 +195,7 @@ async function fetchPullRequest({
       if (typeof json === "string" && json.trim() !== "") return { ok: true, json };
       reason = "the API returned an empty response";
     } catch (err) {
-      reason = readFailure(err, timeoutMs, maxBufferBytes);
+      reason = readFailure(err);
     }
     if (attempt < attempts) {
       const delay = backoffMs * attempt;
@@ -184,8 +263,11 @@ module.exports = {
   fetchPullRequest,
   readFailure,
   sizeOf,
+  stderrPrefix,
   ATTEMPTS,
   BACKOFF_MS,
   READ_TIMEOUT_MS,
   MAX_RESPONSE_BYTES,
+  STDERR_PREFIX_LINES,
+  STDERR_PREFIX_CHARS,
 };
