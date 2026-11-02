@@ -351,7 +351,7 @@ test("a local run with no file reads the three variables, as before", () => {
 // retry is bounded on purpose — an outage that outlives three attempts is a failure of the
 // gate, said out loud, and never a green check nobody verified.
 
-const { fetchPullRequest } = require("./fetch-pull-request.cjs");
+const { fetchPullRequest, sizeOf } = require("./fetch-pull-request.cjs");
 
 const FETCH_ARGS = { repository: "owner/repo", number: 57 };
 
@@ -545,4 +545,113 @@ test("a read that hangs is killed, and the failure names how long it waited", as
   assert.equal(result.ok, false);
   assert.match(result.message, /timed out after 200ms/);
   assert.doesNotMatch(result.message, /spawnSync/);
+});
+
+// ---------------------------------------------------------------------------
+// The classifier's edges — the six suggestions of the third review of #60
+// ---------------------------------------------------------------------------
+//
+// Each one is a sentence a maintainer has to act on, so each one is fixed where the fact
+// is known: the reader that applied a limit names it, and the code namespace of an
+// `execFileSync` error is never read from an error somebody else produced.
+
+/** A throwaway directory with a `bin` that holds nothing: no `gh` anywhere on PATH. */
+async function withEmptyBin(run) {
+  const dir = mkdtempSync(join(tmpdir(), "pr-fetch-"));
+  try {
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    return await run(bin);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("a runner without gh says so, instead of repeating the syscall", async () => {
+  const result = await withEmptyBin(async (bin) => {
+    const saved = process.env.PATH;
+    // Nothing to spawn: the failure is the environment, not the pull request.
+    process.env.PATH = bin;
+    try {
+      return await fetchPullRequest({ ...FETCH_ARGS, attempts: 1 });
+    } finally {
+      process.env.PATH = saved;
+    }
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.message, /no `gh` on PATH/);
+  // `spawnSync gh ENOENT` and a bare `ENOENT` name the syscall, not the thing to install.
+  assert.doesNotMatch(result.message, /spawnSync|ENOENT/);
+});
+
+test("a killed read keeps what it had already printed", async () => {
+  const result = await withAsyncGhStub(
+    `#!/bin/sh\necho "waiting on the proxy handshake" >&2\nsleep 5\n`,
+    async (_dir, bin) => {
+      const saved = process.env.PATH;
+      process.env.PATH = `${bin}:${saved}`;
+      try {
+        return await fetchPullRequest({ ...FETCH_ARGS, attempts: 1, timeoutMs: 200 });
+      } finally {
+        process.env.PATH = saved;
+      }
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.message, /timed out after 200ms/);
+  // The deadline is not the whole story: `gh` had already said something useful.
+  assert.match(result.message, /waiting on the proxy handshake/);
+  assert.doesNotMatch(result.message, /spawnSync/);
+});
+
+test("an injected reader's code namespace is not read as the reader's diagnosis", async () => {
+  const injected = new Error("the mirror said 429");
+  // `ETIMEDOUT` is Node's word for `execFileSync`'s own timeout, nothing more: a read that
+  // was handed in can carry the same code for its own reason.
+  injected.code = "ETIMEDOUT";
+  const result = await fetchPullRequest({
+    ...FETCH_ARGS,
+    attempts: 1,
+    timeoutMs: 15_000,
+    gh: () => {
+      throw injected;
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.message, /the mirror said 429/);
+  // The configured deadline must not be invented into a failure that never waited on it.
+  assert.doesNotMatch(result.message, /timed out/);
+});
+
+test("every attempt that hangs is killed, and the retries still count", async () => {
+  const delays = [];
+  const result = await withAsyncGhStub(`#!/bin/sh\nsleep 5\n`, async (_dir, bin) => {
+    const saved = process.env.PATH;
+    process.env.PATH = `${bin}:${saved}`;
+    try {
+      return await fetchPullRequest({
+        ...FETCH_ARGS,
+        attempts: 2,
+        timeoutMs: 150,
+        sleep: async (ms) => delays.push(ms),
+      });
+    } finally {
+      process.env.PATH = saved;
+    }
+  });
+  assert.equal(result.ok, false);
+  // The two attempts are separate waits, and both are bounded.
+  assert.deepEqual(delays, [1000]);
+  assert.match(result.message, /after 2 attempts/);
+  assert.match(result.message, /timed out after 150ms/);
+});
+
+test("a byte count reads as bytes below a MiB and as one decimal at or above", () => {
+  // The threshold and the format are a decision, not the arithmetic's leftover.
+  assert.equal(sizeOf(1), "1 bytes");
+  assert.equal(sizeOf(1023), "1023 bytes");
+  assert.equal(sizeOf(1024 * 1024), "1.0 MiB");
+  assert.equal(sizeOf(1024 * 1024 + 1), "1.0 MiB");
+  assert.equal(sizeOf(1512 * 1024), "1.5 MiB");
+  assert.equal(sizeOf(32 * 1024 * 1024), "32.0 MiB");
 });
