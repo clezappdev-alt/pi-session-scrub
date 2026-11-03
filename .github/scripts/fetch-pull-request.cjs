@@ -66,13 +66,15 @@ function sizeOf(bytes) {
 
 /**
  * A failed read whose sentence is already composed, because only the layer that applied the
- * limit knows which limit it was — and, with it, whether trying again could say anything new.
+ * limit knows which limit it was — and, with it, whether trying again could say anything new
+ * and what would have to change for the read to work.
  */
 class ReadFailure extends Error {
-  constructor(message, { retryable = true } = {}) {
+  constructor(message, { retryable = true, remedy = "" } = {}) {
     super(message);
     this.name = "ReadFailure";
     this.retryable = retryable;
+    this.remedy = remedy;
   }
 }
 
@@ -115,7 +117,10 @@ function stderrPrefix(stderr) {
  *
  * Two of these facts cannot change between attempts: the runner either has the binary or it
  * does not, and a response over the cap will be over the cap next time. Those are marked
- * unrecoverable, so the retry loop spends no backoff on them.
+ * unrecoverable, so the retry loop spends no backoff on them — and each one carries the
+ * remedy that is actually its own, because "fix the runner" is the wrong advice for a pull
+ * request that is too big and "shrink the pull request" is the wrong advice for a runner
+ * without `gh`.
  */
 function describeReadFailure(err, timeoutMs, maxBufferBytes) {
   // One guarded read of the code, and then a field per branch: the guards and the extraction
@@ -124,6 +129,7 @@ function describeReadFailure(err, timeoutMs, maxBufferBytes) {
   if (code === "ENOENT") {
     return {
       retryable: false,
+      remedy: "What has to change is the runner: its PATH needs the GitHub CLI.",
       message:
         "there is no `gh` on PATH, so nothing could read the pull request: this runner is " +
         "missing the GitHub CLI, not the pull request",
@@ -143,6 +149,9 @@ function describeReadFailure(err, timeoutMs, maxBufferBytes) {
   if (code === "ENOBUFS") {
     return {
       retryable: false,
+      remedy:
+        "What has to change is the pull request, or the cap this read accepts: a response " +
+        "that large will be that large next time.",
       message: `the response was larger than the ${sizeOf(maxBufferBytes)} this read accepts`,
     };
   }
@@ -159,8 +168,8 @@ function readFromApi(args, timeoutMs, maxBufferBytes) {
       timeout: timeoutMs,
     });
   } catch (err) {
-    const { message, retryable } = describeReadFailure(err, timeoutMs, maxBufferBytes);
-    throw new ReadFailure(message, { retryable });
+    const { message, retryable, remedy } = describeReadFailure(err, timeoutMs, maxBufferBytes);
+    throw new ReadFailure(message, { retryable, remedy });
   }
 }
 
@@ -208,6 +217,7 @@ async function fetchPullRequest({
 }) {
   const args = ["api", `repos/${repository}/pulls/${number}`];
   let reason = "no attempt was made";
+  let remedy = "";
   let attempt = 0;
   let unrecoverable = false;
   for (attempt = 1; attempt <= attempts; attempt += 1) {
@@ -220,6 +230,7 @@ async function fetchPullRequest({
       reason = readFailureMessage(err);
       if (err instanceof ReadFailure && !err.retryable) {
         unrecoverable = true;
+        remedy = err.remedy;
         break;
       }
     }
@@ -230,13 +241,15 @@ async function fetchPullRequest({
     }
   }
   if (unrecoverable) {
+    // The remedy comes from the same object as the sentence and the decision not to retry:
+    // the classifier produced all three together, so a shape change has to update them
+    // together.
     return {
       ok: false,
       message:
         `could not read pull request #${number} on attempt ${attempt} of ${attempts} ` +
-        `(${reason}). Nothing about this changes between tries, so it was not retried: ` +
-        `re-running the check changes nothing either, until the runner does. The pull ` +
-        `request is not what failed here.`,
+        `(${reason}). Nothing about this changes between tries, so it was not retried. ` +
+        `${remedy}`,
     };
   }
   return {
