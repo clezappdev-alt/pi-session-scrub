@@ -351,7 +351,7 @@ test("a local run with no file reads the three variables, as before", () => {
 // retry is bounded on purpose — an outage that outlives three attempts is a failure of the
 // gate, said out loud, and never a green check nobody verified.
 
-const { fetchPullRequest, sizeOf, stderrPrefix } = require("./fetch-pull-request.cjs");
+const { fetchPullRequest, sizeOf, stderrPrefix, ReadFailure } = require("./fetch-pull-request.cjs");
 
 const FETCH_ARGS = { repository: "owner/repo", number: 57 };
 
@@ -663,6 +663,21 @@ test("a byte count reads as bytes below a MiB and as one decimal at or above", (
 // The classifier knows two of these by name: a runner without `gh`, and a response above the
 // size the read accepts. Neither changes between attempts, so spending the backoff on them
 // only delays a red check that already knew the answer.
+
+// The edge every lens of the review of #66 found: a non-retryable failure whose remedy was
+// never written would compose a message that ends in nothing, and nothing would fail. The
+// invariant is enforced where it can be violated, so the fallback cannot exist.
+test("a non-retryable failure without a remedy is refused at construction", () => {
+  assert.throws(
+    () => new ReadFailure("there is no `gh` on PATH", { retryable: false }),
+    /needs a remedy/,
+  );
+  // A retryable failure needs none: the retry is what could still work.
+  assert.equal(new ReadFailure("HTTP 502").remedy, "");
+  const withRemedy = new ReadFailure("over the cap", { retryable: false, remedy: "shrink it" });
+  assert.equal(withRemedy.retryable, false);
+  assert.equal(withRemedy.remedy, "shrink it");
+});
 
 test("an environment failure is reported on its first attempt, not retried", async () => {
   const noGh = await withEmptyBin(async (bin) => {
