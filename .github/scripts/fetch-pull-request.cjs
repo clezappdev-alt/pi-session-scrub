@@ -68,11 +68,20 @@ function sizeOf(bytes) {
  * A failed read whose sentence is already composed, because only the layer that applied the
  * limit knows which limit it was — and, with it, whether trying again could say anything new
  * and what would have to change for the read to work.
+ *
+ * The sentence, the decision not to retry and the remedy are one fact, so a non-retryable
+ * failure without a remedy is refused here instead of defaulting to an empty string: the
+ * composed message would otherwise end in nothing and nothing would fail.
  */
 class ReadFailure extends Error {
   constructor(message, { retryable = true, remedy = "" } = {}) {
     super(message);
     this.name = "ReadFailure";
+    if (!retryable && remedy === "") {
+      throw new Error(
+        `a non-retryable read failure needs a remedy, or its message ends in nothing: ${message}`,
+      );
+    }
     this.retryable = retryable;
     this.remedy = remedy;
   }
@@ -187,6 +196,22 @@ function readFailureMessage(err) {
   return reasonOf(err);
 }
 
+/**
+ * The message for a failure no retry can fix, composed where the attempt is known.
+ *
+ * Returning from the catch is what keeps the loop readable: the counters and the remedy are
+ * read where they exist, not hoisted into a variable that has to be explained.
+ */
+function unrecoverableFailure({ number, attempt, attempts, reason, remedy }) {
+  return {
+    ok: false,
+    message:
+      `could not read pull request #${number} on attempt ${attempt} of ${attempts} ` +
+      `(${reason}). Nothing about this changes between tries, so it was not retried. ` +
+      `${remedy}`,
+  };
+}
+
 function defaultSleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -217,10 +242,7 @@ async function fetchPullRequest({
 }) {
   const args = ["api", `repos/${repository}/pulls/${number}`];
   let reason = "no attempt was made";
-  let remedy = "";
-  let attempt = 0;
-  let unrecoverable = false;
-  for (attempt = 1; attempt <= attempts; attempt += 1) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       const json = gh(args);
       // An empty body is not an answer: writing it out would hand the gate an empty file.
@@ -229,9 +251,7 @@ async function fetchPullRequest({
     } catch (err) {
       reason = readFailureMessage(err);
       if (err instanceof ReadFailure && !err.retryable) {
-        unrecoverable = true;
-        remedy = err.remedy;
-        break;
+        return unrecoverableFailure({ number, attempt, attempts, reason, remedy: err.remedy });
       }
     }
     if (attempt < attempts) {
@@ -239,18 +259,6 @@ async function fetchPullRequest({
       log(`read attempt ${attempt} of ${attempts} failed (${reason}); retrying in ${delay}ms`);
       await sleep(delay);
     }
-  }
-  if (unrecoverable) {
-    // The remedy comes from the same object as the sentence and the decision not to retry:
-    // the classifier produced all three together, so a shape change has to update them
-    // together.
-    return {
-      ok: false,
-      message:
-        `could not read pull request #${number} on attempt ${attempt} of ${attempts} ` +
-        `(${reason}). Nothing about this changes between tries, so it was not retried. ` +
-        `${remedy}`,
-    };
   }
   return {
     ok: false,
@@ -308,9 +316,13 @@ if (require.main === module) {
   );
 }
 
+// The exports exist for the tests in this directory. Nothing outside this repository requires
+// this module — the workflow runs it as a script (`node … <owner/repo> <number> <file>`) — so
+// renaming an export cannot break a caller in the wild; it changes what a test imports.
 module.exports = {
   fetchPullRequest,
   readFailureMessage,
+  ReadFailure,
   sizeOf,
   stderrPrefix,
   ATTEMPTS,
