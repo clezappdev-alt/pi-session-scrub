@@ -66,12 +66,13 @@ function sizeOf(bytes) {
 
 /**
  * A failed read whose sentence is already composed, because only the layer that applied the
- * limit knows which limit it was.
+ * limit knows which limit it was — and, with it, whether trying again could say anything new.
  */
 class ReadFailure extends Error {
-  constructor(message) {
+  constructor(message, { retryable = true } = {}) {
     super(message);
     this.name = "ReadFailure";
+    this.retryable = retryable;
   }
 }
 
@@ -83,6 +84,10 @@ class ReadFailure extends Error {
  * goes to a required check's log, so the debug detail is bounded on purpose: three lines is
  * an error and its context, and 400 characters fits a log viewer without a second look. Both
  * `undefined` and `null` mean "nothing": a child that never wrote has no stderr to quote.
+ *
+ * The marker says how much was dropped, not just that something was: "3 of 40 lines" and
+ * "first 400 characters" are the two ways this cuts, and a reader who knows which one fired
+ * can tell a child that printed one line too many from one that buried the diagnosis.
  */
 const STDERR_PREFIX_LINES = 3;
 const STDERR_PREFIX_CHARS = 400;
@@ -92,43 +97,56 @@ function stderrPrefix(stderr) {
   if (text === "") return "";
   const lines = text.split(/\r?\n/);
   const kept = lines.slice(0, STDERR_PREFIX_LINES).join(" | ").trim();
-  const cut = lines.length > STDERR_PREFIX_LINES || kept.length > STDERR_PREFIX_CHARS;
+  const cut = [];
+  if (lines.length > STDERR_PREFIX_LINES) cut.push(`${STDERR_PREFIX_LINES} of ${lines.length} lines`);
+  if (kept.length > STDERR_PREFIX_CHARS) cut.push(`first ${STDERR_PREFIX_CHARS} characters`);
   const head =
     kept.length > STDERR_PREFIX_CHARS ? kept.slice(0, STDERR_PREFIX_CHARS).trimEnd() : kept;
-  return cut ? `${head} (truncated)` : head;
+  return cut.length === 0 ? head : `${head} (truncated, ${cut.join(", ")})`;
 }
 
 /**
- * What the real read says when it fails, in the words a maintainer needs to act on it.
+ * What the real read says when it fails, and whether trying again could say anything else.
  *
  * This runs inside `readFromApi` and nowhere else, which is the whole point: `err.code` is
  * Node's contract for `execFileSync`'s own errors, `timeoutMs` and `maxBufferBytes` are the
  * values that child was actually given, and `PROGRAM ENOENT` — a runner without `gh` — is
  * an environment fact rather than a pull request one.
+ *
+ * Two of these facts cannot change between attempts: the runner either has the binary or it
+ * does not, and a response over the cap will be over the cap next time. Those are marked
+ * unrecoverable, so the retry loop spends no backoff on them.
  */
 function describeReadFailure(err, timeoutMs, maxBufferBytes) {
   // One guarded read of the code, and then a field per branch: the guards and the extraction
   // say the same thing, so nobody has to wonder whether a null was ever possible here.
   const code = err === null || err === undefined ? undefined : err.code;
   if (code === "ENOENT") {
-    return (
-      "there is no `gh` on PATH, so nothing could read the pull request: this runner is " +
-      "missing the GitHub CLI, not the pull request"
-    );
+    return {
+      retryable: false,
+      message:
+        "there is no `gh` on PATH, so nothing could read the pull request: this runner is " +
+        "missing the GitHub CLI, not the pull request",
+    };
   }
   if (code === "ETIMEDOUT") {
     // A killed read may already have printed the useful part of the diagnosis; the deadline
     // is what ended it, not everything it said — and not everything is worth carrying.
     const printed = stderrPrefix(err.stderr);
-    return (
-      `the read timed out after ${timeoutMs}ms` +
-      (printed === "" ? "" : `; it had printed: ${printed}`)
-    );
+    return {
+      retryable: true,
+      message:
+        `the read timed out after ${timeoutMs}ms` +
+        (printed === "" ? "" : `; it had printed: ${printed}`),
+    };
   }
   if (code === "ENOBUFS") {
-    return `the response was larger than the ${sizeOf(maxBufferBytes)} this read accepts`;
+    return {
+      retryable: false,
+      message: `the response was larger than the ${sizeOf(maxBufferBytes)} this read accepts`,
+    };
   }
-  return reasonOf(err);
+  return { retryable: true, message: reasonOf(err) };
 }
 
 /** The real read: `gh` with the job's token, from the environment. */
@@ -141,7 +159,8 @@ function readFromApi(args, timeoutMs, maxBufferBytes) {
       timeout: timeoutMs,
     });
   } catch (err) {
-    throw new ReadFailure(describeReadFailure(err, timeoutMs, maxBufferBytes));
+    const { message, retryable } = describeReadFailure(err, timeoutMs, maxBufferBytes);
+    throw new ReadFailure(message, { retryable });
   }
 }
 
@@ -151,9 +170,10 @@ function readFromApi(args, timeoutMs, maxBufferBytes) {
  * A failure the real read diagnosed passes through untouched. Anything else came from a read
  * that was handed in — a test stub, another client — and speaks with its own words: its
  * `err.code` is not Node's, so reading it here would invent a diagnosis about a limit this
- * process never applied.
+ * process never applied. The name says what it returns, because the classifier ten lines
+ * above is the other thing a search for "readFailure" used to find.
  */
-function readFailure(err) {
+function readFailureMessage(err) {
   if (err instanceof ReadFailure) return err.message;
   return reasonOf(err);
 }
@@ -188,20 +208,36 @@ async function fetchPullRequest({
 }) {
   const args = ["api", `repos/${repository}/pulls/${number}`];
   let reason = "no attempt was made";
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+  let attempt = 0;
+  let unrecoverable = false;
+  for (attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       const json = gh(args);
       // An empty body is not an answer: writing it out would hand the gate an empty file.
       if (typeof json === "string" && json.trim() !== "") return { ok: true, json };
       reason = "the API returned an empty response";
     } catch (err) {
-      reason = readFailure(err);
+      reason = readFailureMessage(err);
+      if (err instanceof ReadFailure && !err.retryable) {
+        unrecoverable = true;
+        break;
+      }
     }
     if (attempt < attempts) {
       const delay = backoffMs * attempt;
       log(`read attempt ${attempt} of ${attempts} failed (${reason}); retrying in ${delay}ms`);
       await sleep(delay);
     }
+  }
+  if (unrecoverable) {
+    return {
+      ok: false,
+      message:
+        `could not read pull request #${number} on attempt ${attempt} of ${attempts} ` +
+        `(${reason}). Nothing about this changes between tries, so it was not retried: ` +
+        `re-running the check changes nothing either, until the runner does. The pull ` +
+        `request is not what failed here.`,
+    };
   }
   return {
     ok: false,
@@ -261,7 +297,7 @@ if (require.main === module) {
 
 module.exports = {
   fetchPullRequest,
-  readFailure,
+  readFailureMessage,
   sizeOf,
   stderrPrefix,
   ATTEMPTS,

@@ -657,30 +657,85 @@ test("a byte count reads as bytes below a MiB and as one decimal at or above", (
 });
 
 // ---------------------------------------------------------------------------
-// What a killed read is allowed to say (the WARNING of its own review)
+// A failure that cannot fix itself is not retried
 // ---------------------------------------------------------------------------
 //
-// Keeping `gh`'s stderr was the point of the previous commit; keeping all of it is not. A
-// hung child can have printed anything up to the buffer it was given, and the sentence this
-// process prints goes to a workflow log.
+// The classifier knows two of these by name: a runner without `gh`, and a response above the
+// size the read accepts. Neither changes between attempts, so spending the backoff on them
+// only delays a red check that already knew the answer.
 
-test("a stderr prefix is one line's worth, and says when it cut something", () => {
+test("an environment failure is reported on its first attempt, not retried", async () => {
+  const noGh = await withEmptyBin(async (bin) => {
+    const saved = process.env.PATH;
+    process.env.PATH = bin;
+    try {
+      const delays = [];
+      const result = await fetchPullRequest({
+        ...FETCH_ARGS,
+        attempts: 3,
+        sleep: async (ms) => delays.push(ms),
+      });
+      return { result, delays };
+    } finally {
+      process.env.PATH = saved;
+    }
+  });
+  assert.equal(noGh.result.ok, false);
+  assert.deepEqual(noGh.delays, []);
+  assert.match(noGh.result.message, /on attempt 1 of 3/);
+  assert.match(noGh.result.message, /no `gh` on PATH/);
+  // The reader of this message must not be sent to press "re-run" for nothing.
+  assert.doesNotMatch(noGh.result.message, /re-run the check/);
+
+  const tooBig = await withAsyncGhStub(
+    `#!/bin/sh\nyes 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n`,
+    async (_dir, bin) => {
+      const saved = process.env.PATH;
+      process.env.PATH = `${bin}:${saved}`;
+      try {
+        const delays = [];
+        const result = await fetchPullRequest({
+          ...FETCH_ARGS,
+          attempts: 3,
+          maxBufferBytes: 1024,
+          sleep: async (ms) => delays.push(ms),
+        });
+        return { result, delays };
+      } finally {
+        process.env.PATH = saved;
+      }
+    },
+  );
+  assert.equal(tooBig.result.ok, false);
+  assert.deepEqual(tooBig.delays, []);
+  assert.match(tooBig.result.message, /on attempt 1 of 3/);
+  assert.match(tooBig.result.message, /larger than the 1024 bytes/);
+});
+
+// ---------------------------------------------------------------------------
+// What a killed read is allowed to say
+// ---------------------------------------------------------------------------
+
+test("a stderr prefix is one line's worth, and says how much it cut", () => {
   // Absent is absent, in both of the shapes Node and a test can produce.
   assert.equal(stderrPrefix(undefined), "");
   assert.equal(stderrPrefix(null), "");
   assert.equal(stderrPrefix("  \n\t"), "");
   assert.equal(stderrPrefix("HTTP 502: Bad Gateway"), "HTTP 502: Bad Gateway");
 
-  const many = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
+  const many = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n");
   const prefix = stderrPrefix(many);
   assert.match(prefix, /^line 1 \| line 2 \| line 3/);
-  assert.match(prefix, /\(truncated\)$/);
+  // How much was cut, not just that something was: 3 of 40 reads differently from 3 of 4.
+  assert.match(prefix, /\(truncated, 3 of 40 lines\)$/);
   // The tail is what gets dropped: a maintainer needs the first error, not the last frame.
-  assert.doesNotMatch(prefix, /line 10/);
+  assert.doesNotMatch(prefix, /line 40/);
 
   const long = "x".repeat(5000);
-  assert.ok(stderrPrefix(long).length < 500, `got ${stderrPrefix(long).length}`);
-  assert.match(stderrPrefix(long), /\(truncated\)$/);
+  assert.match(stderrPrefix(long), /\(truncated, first 400 characters\)$/);
+
+  const both = Array.from({ length: 40 }, () => "y".repeat(300)).join("\n");
+  assert.match(stderrPrefix(both), /\(truncated, 3 of 40 lines, first 400 characters\)$/);
 });
 
 test("a chatty read that hangs is reported as a prefix, not as its whole output", async () => {
@@ -704,7 +759,7 @@ test("a chatty read that hangs is reported as a prefix, not as its whole output"
   assert.match(result.message, /timed out after 200ms/);
   assert.match(result.message, /line 1 of the proxy handshake/);
   // The whole dump in a required check's log is the failure mode this bounds.
-  assert.match(result.message, /\(truncated\)/);
+  assert.match(result.message, /\(truncated, 3 of 40 lines\)/);
   assert.doesNotMatch(result.message, /line 40 of the proxy handshake/);
   assert.ok(result.message.length < 1000, `message was ${result.message.length} chars`);
 });
