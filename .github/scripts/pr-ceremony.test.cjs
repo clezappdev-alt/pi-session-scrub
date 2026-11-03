@@ -684,6 +684,8 @@ test("an environment failure is reported on its first attempt, not retried", asy
   assert.deepEqual(noGh.delays, []);
   assert.match(noGh.result.message, /on attempt 1 of 3/);
   assert.match(noGh.result.message, /no `gh` on PATH/);
+  // Each class names its own remedy: the sentence must not send a reader to the wrong one.
+  assert.match(noGh.result.message, /What has to change is the runner/);
   // The reader of this message must not be sent to press "re-run" for nothing.
   assert.doesNotMatch(noGh.result.message, /re-run the check/);
 
@@ -710,6 +712,9 @@ test("an environment failure is reported on its first attempt, not retried", asy
   assert.deepEqual(tooBig.delays, []);
   assert.match(tooBig.result.message, /on attempt 1 of 3/);
   assert.match(tooBig.result.message, /larger than the 1024 bytes/);
+  // A response over the cap is not a runner problem: saying so sends the fix to the wrong place.
+  assert.match(tooBig.result.message, /What has to change is the pull request, or the cap/);
+  assert.doesNotMatch(tooBig.result.message, /runner/);
 });
 
 // ---------------------------------------------------------------------------
